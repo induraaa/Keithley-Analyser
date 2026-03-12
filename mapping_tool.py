@@ -1,57 +1,48 @@
 """
-Wafer Map Viewer — KDF File Analyser
+Wafer Map Viewer — KDF File Analyser (Tkinter port)
 Reads Keithley ACS KDF V1.2 files and displays an interactive wafer map.
 
 Requirements:
-    pip install PyQt5 matplotlib numpy
+    pip install numpy
 
 Usage:
-    python wafer_mapper.py
-    python wafer_mapper.py path/to/file.kdf
+    python wafer_mapper_tk.py
+    python wafer_mapper_tk.py path/to/file.kdf
 """
 
 import sys
 import os
-import re
 import math
-import copy
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from collections import defaultdict
 
 import numpy as np
 
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QLabel, QPushButton, QFileDialog, QTreeWidget,
-    QTreeWidgetItem, QGroupBox, QLineEdit, QFormLayout, QScrollArea,
-    QFrame, QStatusBar, QComboBox, QCheckBox, QMessageBox, QTabWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView, QToolBar, QAction,
-    QSizePolicy, QDialog, QDialogButtonBox, QDoubleSpinBox
-)
-from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal, QSize
-from PyQt5.QtGui import (
-    QPainter, QColor, QBrush, QPen, QFont, QFontMetrics,
-    QLinearGradient, QPainterPath, QPixmap, QIcon
-)
+# ─────────────────────────────────────────────
+#  COLOUR PALETTE
+# ─────────────────────────────────────────────
+
+C_BG        = '#12121f'
+C_BG2       = '#1a1a2e'
+C_BG3       = '#16213e'
+C_PANEL     = '#1e3a5f'
+C_ACCENT    = '#4fc3f7'
+C_TEXT      = '#ecf0f1'
+C_TEXT_DIM  = '#bdc3c7'
+C_PASS      = '#2ecc71'
+C_FAIL      = '#e74c3c'
+C_NODATA    = '#9b59b6'
+C_SELECTED  = '#f39c12'
+C_HOVER     = '#3498db'
+C_BORDER    = '#2c3e50'
+C_STATUS_BG = '#0d0d1a'
 
 # ─────────────────────────────────────────────
 #  KDF PARSER
 # ─────────────────────────────────────────────
 
 def parse_kdf(filepath):
-    """
-    Parse a KDF V1.2 file.
-
-    Returns:
-        header  : dict of header key->value
-        sites   : list of dicts, each with:
-                    'name'     : str  (e.g. 'Site_p0p0')
-                    'x'        : int  wafer X coordinate
-                    'y'        : int  wafer Y coordinate
-                    'subsites' : dict  subsite_num -> {param@test -> value}
-        tests   : list of unique test names found (e.g. 'CV_0V', 'BVr_250uA')
-        params  : list of unique param names (e.g. 'Cp', 'Vbr_250uA')
-        measurements : list of 'param@test' keys available
-    """
     header = {}
     sites = []
     measurements_set = set()
@@ -62,7 +53,6 @@ def parse_kdf(filepath):
 
     lines = [l.strip() for l in content.splitlines()]
 
-    # Parse header (before <EOH>)
     in_header = True
     i = 0
     while i < len(lines):
@@ -76,13 +66,11 @@ def parse_kdf(filepath):
             header[key.strip()] = val.strip()
         i += 1
 
-    # Skip wafer/lot line (e.g. "Tails_W24_Cj,,1,1")
+    # Skip wafer/lot line
     if i < len(lines):
         i += 1
 
-    # Parse sites
     current_site = None
-    current_subsite = None
 
     while i < len(lines):
         line = lines[i]
@@ -95,10 +83,8 @@ def parse_kdf(filepath):
             if current_site is not None:
                 sites.append(current_site)
             current_site = None
-            current_subsite = None
             continue
 
-        # Site line: Site_p0p0,0,0,0
         if line.startswith('Site_'):
             if current_site is not None:
                 sites.append(current_site)
@@ -110,20 +96,18 @@ def parse_kdf(filepath):
             except ValueError:
                 x, y = 0, 0
             current_site = {'name': name, 'x': x, 'y': y, 'subsites': {}}
-            current_subsite = None
             continue
 
         if current_site is None:
             continue
 
-        # Data line: param@test@subsite#N,value
         if '@' in line and ',' in line:
             key_part, _, val_str = line.partition(',')
             parts = key_part.split('@')
             if len(parts) >= 3:
                 param = parts[0]
                 test  = parts[1]
-                sub_part = parts[2]  # e.g. subsite#3
+                sub_part = parts[2]
                 try:
                     sub_num = int(sub_part.split('#')[1])
                 except (IndexError, ValueError):
@@ -142,22 +126,15 @@ def parse_kdf(filepath):
                 measurements_set.add(mkey)
                 tests_set.add(test)
 
-    # Catch last site if no trailing <EOS>
     if current_site is not None:
         sites.append(current_site)
 
-    # Build ordered lists
     tests = sorted(tests_set)
     measurements = sorted(measurements_set)
-
     return header, sites, tests, measurements
 
 
 def get_site_value(site, mkey, subsite=None):
-    """
-    Get the mean value of mkey across all subsites (or a specific one).
-    Returns None if no valid data.
-    """
     values = []
     for sub_num, data in site['subsites'].items():
         if subsite is not None and sub_num != subsite:
@@ -171,51 +148,78 @@ def get_site_value(site, mkey, subsite=None):
 
 
 # ─────────────────────────────────────────────
-#  WAFER CANVAS WIDGET
+#  FORMATTING HELPERS
 # ─────────────────────────────────────────────
 
-PASS_COLOR   = QColor('#2ecc71')
-FAIL_COLOR   = QColor('#e74c3c')
-NO_DATA_CLR  = QColor('#8e44ad').lighter(130)
-WAFER_BG     = QColor('#1a1a2e')
-WAFER_EDGE   = QColor('#4fc3f7')
-GRID_CLR     = QColor('#2c3e50')
-TEXT_CLR     = QColor('#ecf0f1')
-SELECTED_CLR = QColor('#f39c12')
+def fmt_value(v):
+    if v is None:
+        return 'N/A'
+    av = abs(v)
+    if av == 0:       return '0'
+    if av >= 1:       return f'{v:.3g}'
+    if av >= 1e-3:    return f'{v*1e3:.3g}m'
+    if av >= 1e-6:    return f'{v*1e6:.3g}µ'
+    if av >= 1e-9:    return f'{v*1e9:.3g}n'
+    if av >= 1e-12:   return f'{v*1e12:.3g}p'
+    return f'{v:.3e}'
 
 
-class WaferCanvas(QWidget):
-    """Custom widget that draws the wafer map."""
+def fmt_stat(v):
+    av = abs(v)
+    if av == 0:       return '0'
+    if av >= 1:       return f'{v:.5g}'
+    if av >= 1e-3:    return f'{v*1e3:.4g} m'
+    if av >= 1e-6:    return f'{v*1e6:.4g} µ'
+    if av >= 1e-9:    return f'{v*1e9:.4g} n'
+    if av >= 1e-12:   return f'{v*1e12:.4g} p'
+    return f'{v:.4e}'
 
-    siteClicked = pyqtSignal(dict)   # emits full site dict
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.sites = []
-        self.values = {}        # site_name -> float | None
-        self.low_limit  = None
-        self.high_limit = None
+def hex_to_rgb(h):
+    h = h.lstrip('#')
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+
+def blend_color(base_hex, factor):
+    """Lighten a hex colour by blending toward white."""
+    r, g, b = hex_to_rgb(base_hex)
+    r = min(255, int(r + (255 - r) * factor))
+    g = min(255, int(g + (255 - g) * factor))
+    b = min(255, int(b + (255 - b) * factor))
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+
+# ─────────────────────────────────────────────
+#  WAFER CANVAS
+# ─────────────────────────────────────────────
+
+class WaferCanvas(tk.Canvas):
+    def __init__(self, master, on_site_click=None, **kw):
+        super().__init__(master, bg=C_BG, highlightthickness=0, **kw)
+        self.on_site_click = on_site_click
+
+        self.sites        = []
+        self.values       = {}
+        self.low_limit    = None
+        self.high_limit   = None
         self.selected_site = None
-        self.setMinimumSize(400, 400)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMouseTracking(True)
-        self._hover_site = None
-        self._site_rects = {}   # site_name -> QRectF (screen coords)
+        self._hover_site  = None
+        self._site_rects  = {}   # name -> (x1,y1,x2,y2)
 
-        # unit label for display
-        self.unit = ''
-        self.mkey = ''
+        self.bind('<Configure>', lambda e: self._redraw())
+        self.bind('<Motion>',    self._on_motion)
+        self.bind('<Button-1>',  self._on_click)
+        self.bind('<Leave>',     self._on_leave)
 
-    def load(self, sites, values, low_limit, high_limit, unit='', mkey=''):
-        self.sites = sites
-        self.values = values
-        self.low_limit = low_limit
-        self.high_limit = high_limit
-        self.unit = unit
-        self.mkey = mkey
+    def load(self, sites, values, low_limit, high_limit, mkey=''):
+        self.sites        = sites
+        self.values       = values
+        self.low_limit    = low_limit
+        self.high_limit   = high_limit
+        self.mkey         = mkey
         self.selected_site = None
-        self._hover_site = None
-        self.update()
+        self._hover_site  = None
+        self._redraw()
 
     def _grid_bounds(self):
         if not self.sites:
@@ -224,261 +228,225 @@ class WaferCanvas(QWidget):
         ys = [s['y'] for s in self.sites]
         return min(xs), max(xs), min(ys), max(ys)
 
-    def _transform(self, xmin, xmax, ymin, ymax, w, h):
-        """Return (origin_x, origin_y, cell_size) for painting."""
+    def _transform(self, xmin, xmax, ymin, ymax):
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w < 2 or h < 2:
+            return 30, 30, 20
         cols = xmax - xmin + 1
         rows = ymax - ymin + 1
-        padding = 60
-        cell_w = (w - 2 * padding) / max(cols, 1)
-        cell_h = (h - 2 * padding) / max(rows, 1)
-        cell = min(cell_w, cell_h)
-        ox = (w - cell * cols) / 2
-        oy = (h - cell * rows) / 2
+        padding = 55
+        cell_w = (w - 2*padding) / max(cols, 1)
+        cell_h = (h - 2*padding) / max(rows, 1)
+        cell   = min(cell_w, cell_h)
+        ox = (w - cell*cols) / 2
+        oy = (h - cell*rows) / 2
         return ox, oy, cell
 
-    def _site_color(self, site_name):
-        v = self.values.get(site_name)
+    def _site_color(self, name, hover=False, selected=False):
+        v = self.values.get(name)
         if v is None:
-            return NO_DATA_CLR
-        lo = self.low_limit
-        hi = self.high_limit
-        passed = True
-        if lo is not None and v < lo:
-            passed = False
-        if hi is not None and v > hi:
-            passed = False
-        return PASS_COLOR if passed else FAIL_COLOR
+            base = C_NODATA
+        else:
+            lo, hi = self.low_limit, self.high_limit
+            passed = True
+            if lo is not None and v < lo: passed = False
+            if hi is not None and v > hi: passed = False
+            base = C_PASS if passed else C_FAIL
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        if selected:
+            return blend_color(base, 0.45), C_SELECTED, 2
+        if hover:
+            return blend_color(base, 0.25), '#ffffff', 1
+        return base, C_BORDER, 1
 
-        w = self.width()
-        h = self.height()
-
-        # Background
-        painter.fillRect(0, 0, w, h, WAFER_BG)
+    def _redraw(self):
+        self.delete('all')
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w < 2 or h < 2:
+            return
 
         if not self.sites:
-            painter.setPen(TEXT_CLR)
-            painter.setFont(QFont('Consolas', 14))
-            painter.drawText(self.rect(), Qt.AlignCenter, 'Load a KDF file to begin')
+            self.create_text(w//2, h//2, text='Load a KDF file to begin',
+                             fill=C_TEXT_DIM, font=('Courier', 13))
             return
 
         xmin, xmax, ymin, ymax = self._grid_bounds()
-        ox, oy, cell = self._transform(xmin, xmax, ymin, ymax, w, h)
+        ox, oy, cell = self._transform(xmin, xmax, ymin, ymax)
 
-        # Draw wafer circle
+        # Wafer circle
         cols = xmax - xmin + 1
         rows = ymax - ymin + 1
-        cx = ox + cell * cols / 2
-        cy = oy + cell * rows / 2
-        radius = min(cell * cols, cell * rows) / 2 + cell * 0.6
-        painter.setPen(QPen(WAFER_EDGE, 2))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawEllipse(QPointF(cx, cy), radius, radius)
+        cx = ox + cell*cols/2
+        cy = oy + cell*rows/2
+        radius = min(cell*cols, cell*rows)/2 + cell*0.55
+        self.create_oval(cx-radius, cy-radius, cx+radius, cy+radius,
+                         outline=C_ACCENT, width=2)
+        # Notch
+        nx1 = cx - radius*0.22
+        nx2 = cx + radius*0.22
+        ny  = cy + radius - 3
+        self.create_line(nx1, ny, nx2, ny, fill=C_ACCENT, width=4)
 
-        # Draw flat (notch at bottom)
-        notch_y = cy + radius - 4
-        painter.setPen(QPen(WAFER_EDGE, 4))
-        painter.drawLine(int(cx - radius * 0.25), int(notch_y),
-                         int(cx + radius * 0.25), int(notch_y))
-
-        # Draw sites
+        # Sites
         self._site_rects = {}
         font_size = max(5, int(cell * 0.13))
-        painter.setFont(QFont('Consolas', font_size))
+        font      = ('Courier', font_size)
+        font_small = ('Courier', max(4, font_size-2))
 
         for site in self.sites:
-            sx = site['x']
-            sy = site['y']
-            # Flip Y so +Y is up
+            sx, sy = site['x'], site['y']
             px = ox + (sx - xmin) * cell
             py = oy + (ymax - sy) * cell
+            x1, y1 = px+1, py+1
+            x2, y2 = px+cell-1, py+cell-1
 
-            rect = QRectF(px + 1, py + 1, cell - 2, cell - 2)
-            self._site_rects[site['name']] = rect
+            is_sel   = self.selected_site and site['name'] == self.selected_site['name']
+            is_hover = self._hover_site and site['name'] == self._hover_site['name']
 
-            color = self._site_color(site['name'])
+            fill, outline, width = self._site_color(site['name'],
+                                                     hover=is_hover,
+                                                     selected=is_sel)
+            tag = f'site_{site["name"]}'
+            self.create_rectangle(x1, y1, x2, y2,
+                                  fill=fill, outline=outline,
+                                  width=width, tags=(tag,))
 
-            # Highlight selected
-            if self.selected_site and site['name'] == self.selected_site['name']:
-                painter.setPen(QPen(SELECTED_CLR, 2))
-                painter.setBrush(QBrush(color.lighter(140)))
-            elif self._hover_site and site['name'] == self._hover_site['name']:
-                painter.setPen(QPen(Qt.white, 1))
-                painter.setBrush(QBrush(color.lighter(120)))
-            else:
-                painter.setPen(QPen(GRID_CLR, 1))
-                painter.setBrush(QBrush(color))
-
-            painter.drawRoundedRect(rect, 3, 3)
+            self._site_rects[site['name']] = (x1, y1, x2, y2)
 
             # Value label
             v = self.values.get(site['name'])
-            if v is not None and cell > 30:
-                painter.setPen(TEXT_CLR)
-                val_str = self._fmt_value(v)
-                painter.drawText(rect, Qt.AlignCenter, val_str)
+            if v is not None and cell > 28:
+                self.create_text((x1+x2)/2, (y1+y2)/2,
+                                 text=fmt_value(v),
+                                 fill=C_TEXT, font=font)
 
-            # Coord label if large enough
+            # Coord label
             if cell > 55:
-                painter.setPen(QColor(255, 255, 255, 100))
-                small_font = QFont('Consolas', max(4, font_size - 2))
-                painter.setFont(small_font)
-                coord_rect = QRectF(px + 2, py + 2, cell - 4, cell * 0.3)
-                painter.drawText(coord_rect, Qt.AlignLeft | Qt.AlignTop,
-                                 f'{sx},{sy}')
-                painter.setFont(QFont('Consolas', font_size))
+                self.create_text(x1+3, y1+3,
+                                 text=f'{sx},{sy}',
+                                 fill='#ffffff66',
+                                 font=font_small, anchor='nw')
 
         # Legend
-        self._draw_legend(painter, w, h)
+        self._draw_legend(w, h)
 
-        painter.end()
-
-    def _fmt_value(self, v):
-        """Format a measurement value with appropriate SI prefix."""
-        if v is None:
-            return 'N/A'
-        av = abs(v)
-        if av == 0:
-            return '0'
-        if av >= 1:
-            return f'{v:.3g}'
-        if av >= 1e-3:
-            return f'{v*1e3:.3g}m'
-        if av >= 1e-6:
-            return f'{v*1e6:.3g}µ'
-        if av >= 1e-9:
-            return f'{v*1e9:.3g}n'
-        if av >= 1e-12:
-            return f'{v*1e12:.3g}p'
-        return f'{v:.3e}'
-
-    def _draw_legend(self, painter, w, h):
-        lx, ly = 12, h - 80
-        items = [
-            (PASS_COLOR, 'Pass'),
-            (FAIL_COLOR, 'Fail'),
-            (NO_DATA_CLR, 'No Data'),
-        ]
+    def _draw_legend(self, w, h):
+        lx, ly = 10, h - 78
         if self.low_limit is None and self.high_limit is None:
-            items = [(NO_DATA_CLR, 'No limits set — set limits to see pass/fail')]
+            items = [(C_NODATA, 'No limits set')]
+        else:
+            items = [(C_PASS, 'Pass'), (C_FAIL, 'Fail'), (C_NODATA, 'No Data')]
 
-        painter.setFont(QFont('Consolas', 9))
         for color, label in items:
-            painter.setBrush(QBrush(color))
-            painter.setPen(QPen(Qt.white, 1))
-            painter.drawRoundedRect(lx, ly, 14, 14, 2, 2)
-            painter.setPen(TEXT_CLR)
-            painter.drawText(lx + 18, ly + 11, label)
-            ly += 22
+            self.create_rectangle(lx, ly, lx+13, ly+13,
+                                  fill=color, outline='#ffffff', width=1)
+            self.create_text(lx+17, ly+6, text=label, fill=C_TEXT,
+                             font=('Courier', 9), anchor='w')
+            ly += 20
 
-    def mouseMoveEvent(self, event):
-        pos = QPointF(event.pos())
-        self._hover_site = None
+    def _site_at(self, x, y):
         for site in self.sites:
             r = self._site_rects.get(site['name'])
-            if r and r.contains(pos):
-                self._hover_site = site
-                self.setCursor(Qt.PointingHandCursor)
-                break
-        else:
-            self.setCursor(Qt.ArrowCursor)
-        self.update()
+            if r and r[0] <= x <= r[2] and r[1] <= y <= r[3]:
+                return site
+        return None
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            pos = QPointF(event.pos())
-            for site in self.sites:
-                r = self._site_rects.get(site['name'])
-                if r and r.contains(pos):
-                    self.selected_site = site
-                    self.siteClicked.emit(site)
-                    self.update()
-                    return
+    def _on_motion(self, event):
+        site = self._site_at(event.x, event.y)
+        if site != self._hover_site:
+            self._hover_site = site
+            self.configure(cursor='hand2' if site else '')
+            self._redraw()
 
-    def leaveEvent(self, event):
+    def _on_click(self, event):
+        site = self._site_at(event.x, event.y)
+        if site:
+            self.selected_site = site
+            self._redraw()
+            if self.on_site_click:
+                self.on_site_click(site)
+
+    def _on_leave(self, event):
         self._hover_site = None
-        self.update()
+        self._redraw()
 
 
 # ─────────────────────────────────────────────
-#  LIMITS DIALOG
+#  STYLED HELPERS
 # ─────────────────────────────────────────────
 
-class LimitsDialog(QDialog):
-    def __init__(self, mkey, low=None, high=None, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f'Set Limits — {mkey}')
-        self.setFixedWidth(320)
-        layout = QVBoxLayout(self)
+def styled_label(parent, text='', bold=False, color=C_TEXT, size=10, **kw):
+    weight = 'bold' if bold else 'normal'
+    return tk.Label(parent, text=text, bg=C_BG, fg=color,
+                    font=('Courier', size, weight), **kw)
 
-        form = QFormLayout()
 
-        self.low_check  = QCheckBox('Enable Low Limit')
-        self.high_check = QCheckBox('Enable High Limit')
-        self.low_spin   = QDoubleSpinBox()
-        self.high_spin  = QDoubleSpinBox()
+def styled_button(parent, text, command, **kw):
+    btn = tk.Button(parent, text=text, command=command,
+                    bg=C_PANEL, fg=C_TEXT,
+                    activebackground=C_HOVER, activeforeground=C_TEXT,
+                    relief='flat', bd=0, padx=10, pady=4,
+                    font=('Courier', 10), cursor='hand2',
+                    highlightbackground=C_ACCENT, highlightthickness=1,
+                    **kw)
+    return btn
 
-        for sp in (self.low_spin, self.high_spin):
-            sp.setDecimals(6)
-            sp.setRange(-1e18, 1e18)
-            sp.setSingleStep(0.001)
 
-        if low is not None:
-            self.low_check.setChecked(True)
-            self.low_spin.setValue(low)
-        if high is not None:
-            self.high_check.setChecked(True)
-            self.high_spin.setValue(high)
+def styled_entry(parent, **kw):
+    e = tk.Entry(parent, bg=C_PANEL, fg=C_TEXT,
+                 insertbackground=C_TEXT,
+                 relief='flat', bd=3,
+                 font=('Courier', 10), **kw)
+    return e
 
-        self.low_check.toggled.connect(self.low_spin.setEnabled)
-        self.high_check.toggled.connect(self.high_spin.setEnabled)
-        self.low_spin.setEnabled(self.low_check.isChecked())
-        self.high_spin.setEnabled(self.high_check.isChecked())
 
-        form.addRow(self.low_check, self.low_spin)
-        form.addRow(self.high_check, self.high_spin)
-        layout.addLayout(form)
-
-        note = QLabel('<i>Enter raw SI values (e.g. 3.2e-13 for 320 fF)</i>')
-        note.setStyleSheet('color: #aaa; font-size: 10px;')
-        layout.addWidget(note)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def get_limits(self):
-        low  = self.low_spin.value()  if self.low_check.isChecked()  else None
-        high = self.high_spin.value() if self.high_check.isChecked() else None
-        return low, high
+def make_separator(parent, orient='horizontal'):
+    return ttk.Separator(parent, orient=orient)
 
 
 # ─────────────────────────────────────────────
-#  STATISTICS PANEL
+#  STATS PANEL
 # ─────────────────────────────────────────────
 
-class StatsPanel(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+class StatsPanel(tk.Frame):
+    def __init__(self, master, **kw):
+        super().__init__(master, bg=C_BG2, **kw)
 
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(['Statistic', 'Value'])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setVisible(False)
-        layout.addWidget(self.table)
+        cols = ('Statistic', 'Value')
+        style = ttk.Style()
+        style.theme_use('default')
+        style.configure('Stats.Treeview',
+                        background=C_BG2,
+                        foreground=C_TEXT,
+                        fieldbackground=C_BG2,
+                        rowheight=22,
+                        font=('Courier', 10))
+        style.configure('Stats.Treeview.Heading',
+                        background=C_PANEL,
+                        foreground=C_ACCENT,
+                        font=('Courier', 10, 'bold'),
+                        relief='flat')
+        style.map('Stats.Treeview', background=[('selected', C_HOVER)])
+
+        self.tree = ttk.Treeview(self, columns=cols, show='headings',
+                                 style='Stats.Treeview', selectmode='none')
+        for c in cols:
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=120, anchor='w')
+        sb = ttk.Scrollbar(self, orient='vertical', command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
 
     def update_stats(self, values_dict, low, high):
-        vals = [v for v in values_dict.values() if v is not None and math.isfinite(v)]
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        vals = [v for v in values_dict.values()
+                if v is not None and math.isfinite(v)]
         if not vals:
-            self.table.setRowCount(0)
             return
 
         arr = np.array(vals)
@@ -487,349 +455,349 @@ class StatsPanel(QWidget):
             if (low is None or v >= low) and (high is None or v <= high)
         )
         total = len(arr)
-        yield_pct = passed / total * 100 if total > 0 else 0
+        yield_pct = passed / total * 100 if total else 0
+        sigma3 = (f'{fmt_stat(arr.mean()-3*arr.std())} → '
+                  f'{fmt_stat(arr.mean()+3*arr.std())}')
 
         rows = [
-            ('Count',    f'{total}'),
-            ('Mean',     self._fmt(arr.mean())),
-            ('Std Dev',  self._fmt(arr.std())),
-            ('Min',      self._fmt(arr.min())),
-            ('Max',      self._fmt(arr.max())),
-            ('Median',   self._fmt(float(np.median(arr)))),
-            ('3σ Range', f'{self._fmt(arr.mean()-3*arr.std())} → {self._fmt(arr.mean()+3*arr.std())}'),
-            ('Pass',     f'{passed}'),
-            ('Fail',     f'{total - passed}'),
+            ('Count',    str(total)),
+            ('Mean',     fmt_stat(arr.mean())),
+            ('Std Dev',  fmt_stat(arr.std())),
+            ('Min',      fmt_stat(arr.min())),
+            ('Max',      fmt_stat(arr.max())),
+            ('Median',   fmt_stat(float(np.median(arr)))),
+            ('3σ Range', sigma3),
+            ('Pass',     str(passed)),
+            ('Fail',     str(total - passed)),
             ('Yield',    f'{yield_pct:.1f}%'),
         ]
 
-        self.table.setRowCount(len(rows))
-        for i, (k, v) in enumerate(rows):
-            self.table.setItem(i, 0, QTableWidgetItem(k))
-            item = QTableWidgetItem(v)
+        for k, v in rows:
+            iid = self.tree.insert('', 'end', values=(k, v))
             if k == 'Yield':
-                color = '#2ecc71' if yield_pct >= 90 else '#e74c3c' if yield_pct < 70 else '#f39c12'
-                item.setForeground(QColor(color))
-                item.setFont(QFont('Consolas', 9, QFont.Bold))
-            self.table.setItem(i, 1, item)
-
-    def _fmt(self, v):
-        av = abs(v)
-        if av == 0:            return '0'
-        if av >= 1:            return f'{v:.5g}'
-        if av >= 1e-3:         return f'{v*1e3:.4g} m'
-        if av >= 1e-6:         return f'{v*1e6:.4g} µ'
-        if av >= 1e-9:         return f'{v*1e9:.4g} n'
-        if av >= 1e-12:        return f'{v*1e12:.4g} p'
-        return f'{v:.4e}'
+                color = (C_PASS if yield_pct >= 90
+                         else C_FAIL if yield_pct < 70
+                         else C_SELECTED)
+                self.tree.tag_configure('yield', foreground=color,
+                                         font=('Courier', 10, 'bold'))
+                self.tree.item(iid, tags=('yield',))
 
 
 # ─────────────────────────────────────────────
 #  SITE DETAIL PANEL
 # ─────────────────────────────────────────────
 
-class SiteDetailPanel(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+class SiteDetailPanel(tk.Frame):
+    def __init__(self, master, **kw):
+        super().__init__(master, bg=C_BG2, **kw)
 
-        self.title = QLabel('Click a die to inspect')
-        self.title.setStyleSheet('font-weight: bold; font-size: 12px; color: #f39c12;')
-        layout.addWidget(self.title)
+        self.title_lbl = tk.Label(self, text='Click a die to inspect',
+                                  bg=C_BG2, fg=C_SELECTED,
+                                  font=('Courier', 11, 'bold'),
+                                  anchor='w')
+        self.title_lbl.pack(fill='x', padx=4, pady=(4, 2))
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(['Measurement', 'Subsite', 'Value'])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setVisible(False)
-        layout.addWidget(self.table)
+        style = ttk.Style()
+        style.configure('Detail.Treeview',
+                        background=C_BG2, foreground=C_TEXT,
+                        fieldbackground=C_BG2, rowheight=20,
+                        font=('Courier', 9))
+        style.configure('Detail.Treeview.Heading',
+                        background=C_PANEL, foreground=C_ACCENT,
+                        font=('Courier', 9, 'bold'), relief='flat')
+        style.map('Detail.Treeview', background=[('selected', C_HOVER)])
+
+        cols = ('Measurement', 'Subsite', 'Value')
+        self.tree = ttk.Treeview(self, columns=cols, show='headings',
+                                 style='Detail.Treeview', selectmode='browse')
+        self.tree.heading('Measurement', text='Measurement')
+        self.tree.heading('Subsite',     text='Subsite')
+        self.tree.heading('Value',       text='Value')
+        self.tree.column('Measurement', width=160)
+        self.tree.column('Subsite',     width=55,  anchor='center')
+        self.tree.column('Value',       width=90,  anchor='e')
+
+        sb = ttk.Scrollbar(self, orient='vertical', command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
 
     def show_site(self, site):
-        self.title.setText(f'  Site {site["name"]}  |  X={site["x"]}, Y={site["y"]}')
-
-        rows = []
+        self.title_lbl.config(
+            text=f'  {site["name"]}  |  X={site["x"]}, Y={site["y"]}')
+        for row in self.tree.get_children():
+            self.tree.delete(row)
         for sub_num in sorted(site['subsites'].keys()):
-            data = site['subsites'][sub_num]
-            for mkey, val in sorted(data.items()):
-                rows.append((mkey, f'#{sub_num}', val))
+            for mkey, val in sorted(site['subsites'][sub_num].items()):
+                vstr = f'{val:.6g}' if val is not None else 'N/A'
+                self.tree.insert('', 'end', values=(mkey, f'#{sub_num}', vstr))
 
-        self.table.setRowCount(len(rows))
-        for i, (mkey, sub, val) in enumerate(rows):
-            self.table.setItem(i, 0, QTableWidgetItem(mkey))
-            self.table.setItem(i, 1, QTableWidgetItem(sub))
-            if val is None:
-                self.table.setItem(i, 2, QTableWidgetItem('N/A'))
-            else:
-                self.table.setItem(i, 2, QTableWidgetItem(f'{val:.6g}'))
+
+# ─────────────────────────────────────────────
+#  LIMITS DIALOG
+# ─────────────────────────────────────────────
+
+class LimitsDialog(tk.Toplevel):
+    def __init__(self, parent, mkey, low=None, high=None):
+        super().__init__(parent)
+        self.title(f'Set Limits — {mkey}')
+        self.configure(bg=C_BG)
+        self.resizable(False, False)
+        self.result = None
+
+        tk.Label(self, text=f'Limits for: {mkey}',
+                 bg=C_BG, fg=C_ACCENT,
+                 font=('Courier', 11, 'bold')).grid(
+            row=0, column=0, columnspan=3, padx=14, pady=(12,6), sticky='w')
+
+        self._low_var  = tk.BooleanVar(value=low is not None)
+        self._high_var = tk.BooleanVar(value=high is not None)
+        self._low_ent  = tk.StringVar(value=str(low) if low is not None else '')
+        self._high_ent = tk.StringVar(value=str(high) if high is not None else '')
+
+        for row, (label, bvar, evar) in enumerate([
+                ('Low limit:',  self._low_var,  self._low_ent),
+                ('High limit:', self._high_var, self._high_ent),
+        ], start=1):
+            cb = tk.Checkbutton(self, text=label, variable=bvar,
+                                bg=C_BG, fg=C_TEXT, selectcolor=C_PANEL,
+                                font=('Courier', 10),
+                                activebackground=C_BG, activeforeground=C_TEXT)
+            cb.grid(row=row, column=0, padx=(14,4), pady=4, sticky='w')
+            ent = tk.Entry(self, textvariable=evar,
+                           bg=C_PANEL, fg=C_TEXT,
+                           insertbackground=C_TEXT, relief='flat', bd=3,
+                           font=('Courier', 10), width=18)
+            ent.grid(row=row, column=1, padx=(0,14), pady=4)
+
+        note = tk.Label(self,
+                        text='Use raw SI values (e.g. 3.2e-13 for 320 fF)',
+                        bg=C_BG, fg='#888888', font=('Courier', 8))
+        note.grid(row=3, column=0, columnspan=2, padx=14, pady=(0,8))
+
+        btn_frame = tk.Frame(self, bg=C_BG)
+        btn_frame.grid(row=4, column=0, columnspan=2, pady=(0,12))
+        styled_button(btn_frame, '  OK  ', self._ok).pack(side='left', padx=6)
+        styled_button(btn_frame, 'Cancel', self.destroy).pack(side='left', padx=6)
+
+        self.grab_set()
+        self.wait_window()
+
+    def _ok(self):
+        low = high = None
+        if self._low_var.get():
+            try:   low = float(self._low_ent.get())
+            except ValueError:
+                messagebox.showwarning('Invalid', 'Low limit must be a number.',
+                                       parent=self)
+                return
+        if self._high_var.get():
+            try:   high = float(self._high_ent.get())
+            except ValueError:
+                messagebox.showwarning('Invalid', 'High limit must be a number.',
+                                       parent=self)
+                return
+        self.result = (low, high)
+        self.destroy()
 
 
 # ─────────────────────────────────────────────
 #  MAIN WINDOW
 # ─────────────────────────────────────────────
 
-DARK_STYLE = """
-QMainWindow, QWidget {
-    background-color: #12121f;
-    color: #ecf0f1;
-    font-family: 'Consolas', 'Courier New', monospace;
-    font-size: 11px;
-}
-QGroupBox {
-    border: 1px solid #2c3e50;
-    border-radius: 4px;
-    margin-top: 8px;
-    padding-top: 6px;
-    color: #4fc3f7;
-    font-weight: bold;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 8px;
-}
-QPushButton {
-    background-color: #1e3a5f;
-    border: 1px solid #4fc3f7;
-    border-radius: 4px;
-    padding: 5px 12px;
-    color: #ecf0f1;
-}
-QPushButton:hover {
-    background-color: #2980b9;
-}
-QPushButton:pressed {
-    background-color: #1a6491;
-}
-QPushButton#actionBtn {
-    background-color: #1a5276;
-    color: #4fc3f7;
-    font-weight: bold;
-}
-QComboBox {
-    background-color: #1e3a5f;
-    border: 1px solid #2c3e50;
-    border-radius: 3px;
-    padding: 3px 6px;
-    color: #ecf0f1;
-}
-QComboBox::drop-down { border: none; }
-QComboBox QAbstractItemView {
-    background-color: #1a1a2e;
-    selection-background-color: #2980b9;
-}
-QTreeWidget, QTableWidget {
-    background-color: #1a1a2e;
-    border: 1px solid #2c3e50;
-    gridline-color: #2c3e50;
-    alternate-background-color: #16213e;
-}
-QTreeWidget::item:selected, QTableWidget::item:selected {
-    background-color: #2980b9;
-}
-QHeaderView::section {
-    background-color: #1e3a5f;
-    color: #4fc3f7;
-    border: none;
-    padding: 4px;
-    font-weight: bold;
-}
-QLineEdit {
-    background-color: #1e3a5f;
-    border: 1px solid #2c3e50;
-    border-radius: 3px;
-    padding: 4px;
-    color: #ecf0f1;
-}
-QTabWidget::pane {
-    border: 1px solid #2c3e50;
-    background-color: #12121f;
-}
-QTabBar::tab {
-    background-color: #1e3a5f;
-    color: #bdc3c7;
-    padding: 6px 14px;
-    border: 1px solid #2c3e50;
-    border-bottom: none;
-}
-QTabBar::tab:selected {
-    background-color: #2980b9;
-    color: white;
-}
-QScrollBar:vertical {
-    background: #1a1a2e;
-    width: 8px;
-}
-QScrollBar::handle:vertical {
-    background: #2c3e50;
-    border-radius: 4px;
-}
-QSplitter::handle {
-    background: #2c3e50;
-}
-QStatusBar {
-    background-color: #0d0d1a;
-    color: #4fc3f7;
-    border-top: 1px solid #2c3e50;
-}
-QDoubleSpinBox {
-    background-color: #1e3a5f;
-    border: 1px solid #2c3e50;
-    color: #ecf0f1;
-    padding: 3px;
-}
-QCheckBox { color: #ecf0f1; spacing: 6px; }
-QLabel { color: #ecf0f1; }
-"""
-
-
-class MainWindow(QMainWindow):
+class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Wafer Map Viewer — KDF Analyser')
-        self.resize(1300, 850)
-        self.setStyleSheet(DARK_STYLE)
+        self.title('Wafer Map Viewer — KDF Analyser')
+        self.geometry('1300x850')
+        self.configure(bg=C_BG)
 
         self._header   = {}
         self._sites    = []
         self._tests    = []
         self._mkeys    = []
-        self._limits   = {}     # mkey -> (low, high)
+        self._limits   = {}
         self._current_mkey = None
         self._filepath = None
 
+        self._apply_ttk_style()
         self._build_ui()
         self._update_ui_state()
+
+    # ── TTK global style ─────────────────────
+
+    def _apply_ttk_style(self):
+        s = ttk.Style(self)
+        s.theme_use('default')
+        s.configure('TNotebook',
+                    background=C_BG, borderwidth=0)
+        s.configure('TNotebook.Tab',
+                    background=C_PANEL, foreground=C_TEXT_DIM,
+                    padding=[12, 5], font=('Courier', 10))
+        s.map('TNotebook.Tab',
+              background=[('selected', C_HOVER)],
+              foreground=[('selected', '#ffffff')])
+        s.configure('Vertical.TScrollbar',
+                    background=C_BG2, troughcolor=C_BG,
+                    arrowcolor=C_ACCENT, bordercolor=C_BG)
 
     # ── Build UI ─────────────────────────────
 
     def _build_ui(self):
-        # Toolbar
-        tb = QToolBar('Main', self)
-        tb.setIconSize(QSize(16, 16))
-        tb.setMovable(False)
-        self.addToolBar(tb)
+        # ── Top toolbar ──
+        toolbar = tk.Frame(self, bg=C_BG3, height=36)
+        toolbar.pack(side='top', fill='x')
+        toolbar.pack_propagate(False)
 
-        open_act = QAction('📂  Open KDF…', self)
-        open_act.triggered.connect(self.open_file)
-        tb.addAction(open_act)
+        styled_button(toolbar, '📂  Open KDF…', self.open_file).pack(
+            side='left', padx=6, pady=4)
+        styled_button(toolbar, '💾  Export Map…', self.export_map).pack(
+            side='left', padx=2, pady=4)
 
-        export_act = QAction('💾  Export Map…', self)
-        export_act.triggered.connect(self.export_map)
-        tb.addAction(export_act)
+        tk.Frame(toolbar, bg=C_BORDER, width=1).pack(
+            side='left', fill='y', padx=8, pady=6)
 
-        tb.addSeparator()
-        self.lbl_file = QLabel('  No file loaded')
-        self.lbl_file.setStyleSheet('color: #4fc3f7;')
-        tb.addWidget(self.lbl_file)
+        self.lbl_file = tk.Label(toolbar, text='  No file loaded',
+                                 bg=C_BG3, fg=C_ACCENT,
+                                 font=('Courier', 10))
+        self.lbl_file.pack(side='left')
 
-        # Central split layout
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_h = QHBoxLayout(central)
-        main_h.setSpacing(6)
-        main_h.setContentsMargins(6, 6, 6, 6)
+        # ── Status bar ──
+        self.status_var = tk.StringVar(
+            value='Ready — open a KDF file to begin')
+        status = tk.Label(self, textvariable=self.status_var,
+                          bg=C_STATUS_BG, fg=C_ACCENT,
+                          font=('Courier', 9), anchor='w', padx=8,
+                          relief='flat', bd=0,
+                          borderwidth=1)
+        status.pack(side='bottom', fill='x')
 
-        # ── Left panel ──
-        left = QWidget()
-        left.setFixedWidth(270)
-        left_v = QVBoxLayout(left)
-        left_v.setSpacing(6)
-        left_v.setContentsMargins(0, 0, 0, 0)
+        # ── Main content area ──
+        content = tk.Frame(self, bg=C_BG)
+        content.pack(fill='both', expand=True, padx=6, pady=6)
 
-        # File info
-        info_box = QGroupBox('File Info')
-        info_form = QFormLayout(info_box)
-        self.lbl_lot  = QLabel('—')
-        self.lbl_sys  = QLabel('—')
-        self.lbl_stt  = QLabel('—')
-        self.lbl_sites_count = QLabel('—')
-        info_form.addRow('Lot:', self.lbl_lot)
-        info_form.addRow('System:', self.lbl_sys)
-        info_form.addRow('Start:', self.lbl_stt)
-        info_form.addRow('Sites:', self.lbl_sites_count)
-        left_v.addWidget(info_box)
+        # Left panel
+        left = tk.Frame(content, bg=C_BG, width=270)
+        left.pack(side='left', fill='y', padx=(0, 6))
+        left.pack_propagate(False)
+        self._build_left_panel(left)
 
-        # Measurement selector
-        meas_box = QGroupBox('Measurement')
-        meas_v = QVBoxLayout(meas_box)
-        self.mkey_combo = QComboBox()
-        self.mkey_combo.currentTextChanged.connect(self._on_mkey_changed)
-        meas_v.addWidget(self.mkey_combo)
-        left_v.addWidget(meas_box)
+        # Centre: wafer canvas
+        self.canvas = WaferCanvas(content, on_site_click=self._on_site_clicked)
+        self.canvas.pack(side='left', fill='both', expand=True)
 
-        # Limits
-        lim_box = QGroupBox('Pass / Fail Limits')
-        lim_v = QVBoxLayout(lim_box)
+        # Right panel: tabs
+        right = tk.Frame(content, bg=C_BG, width=285)
+        right.pack(side='right', fill='y', padx=(6, 0))
+        right.pack_propagate(False)
 
-        lim_row = QHBoxLayout()
-        self.low_edit  = QLineEdit()
-        self.low_edit.setPlaceholderText('Low limit')
-        self.high_edit = QLineEdit()
-        self.high_edit.setPlaceholderText('High limit')
-        lim_row.addWidget(QLabel('Low:'))
-        lim_row.addWidget(self.low_edit)
-        lim_v.addLayout(lim_row)
+        tabs = ttk.Notebook(right)
+        tabs.pack(fill='both', expand=True)
 
-        lim_row2 = QHBoxLayout()
-        lim_row2.addWidget(QLabel('High:'))
-        lim_row2.addWidget(self.high_edit)
-        lim_v.addLayout(lim_row2)
+        self.detail_panel = SiteDetailPanel(tabs)
+        tabs.add(self.detail_panel, text='🔍  Die Detail')
 
-        apply_btn = QPushButton('Apply Limits')
-        apply_btn.clicked.connect(self._apply_limits)
-        lim_v.addWidget(apply_btn)
+        self.stats_panel = StatsPanel(tabs)
+        tabs.add(self.stats_panel, text='📊  Statistics')
 
-        clear_btn = QPushButton('Clear Limits')
-        clear_btn.clicked.connect(self._clear_limits)
-        lim_v.addWidget(clear_btn)
+    def _build_left_panel(self, parent):
 
-        left_v.addWidget(lim_box)
+        def section(label):
+            f = tk.LabelFrame(parent, text=f'  {label}  ',
+                              bg=C_BG, fg=C_ACCENT,
+                              font=('Courier', 9, 'bold'),
+                              relief='groove', bd=1,
+                              labelanchor='n')
+            f.pack(fill='x', padx=2, pady=(0, 6))
+            return f
 
-        # Filter by test type
-        filter_box = QGroupBox('Filter Tests')
-        filter_v = QVBoxLayout(filter_box)
-        self.test_tree = QTreeWidget()
-        self.test_tree.setHeaderHidden(True)
-        self.test_tree.setFixedHeight(140)
-        filter_v.addWidget(self.test_tree)
-        left_v.addWidget(filter_box)
+        # ── File Info ──
+        info = section('File Info')
+        self.lbl_lot  = self._info_row(info, 'Lot:',    '—')
+        self.lbl_sys  = self._info_row(info, 'System:', '—')
+        self.lbl_stt  = self._info_row(info, 'Start:',  '—')
+        self.lbl_nst  = self._info_row(info, 'Sites:',  '—')
 
-        left_v.addStretch()
+        # ── Measurement ──
+        meas = section('Measurement')
+        self.mkey_combo = ttk.Combobox(meas, state='disabled',
+                                       font=('Courier', 10))
+        self._style_combobox()
+        self.mkey_combo.pack(fill='x', padx=6, pady=6)
+        self.mkey_combo.bind('<<ComboboxSelected>>', self._on_mkey_changed)
 
-        main_h.addWidget(left)
+        # ── Limits ──
+        lim = section('Pass / Fail Limits')
 
-        # ── Centre: wafer canvas ──
-        self.canvas = WaferCanvas()
-        self.canvas.siteClicked.connect(self._on_site_clicked)
-        main_h.addWidget(self.canvas, stretch=3)
+        for label, attr in [('Low:', 'low_edit'), ('High:', 'high_edit')]:
+            row = tk.Frame(lim, bg=C_BG)
+            row.pack(fill='x', padx=6, pady=2)
+            tk.Label(row, text=label, bg=C_BG, fg=C_TEXT,
+                     font=('Courier', 10), width=6, anchor='w').pack(side='left')
+            ent = styled_entry(row, width=14)
+            ent.pack(side='left', fill='x', expand=True)
+            setattr(self, attr, ent)
 
-        # ── Right panel: tabs ──
-        right = QWidget()
-        right.setFixedWidth(280)
-        right_v = QVBoxLayout(right)
-        right_v.setContentsMargins(0, 0, 0, 0)
+        btn_row = tk.Frame(lim, bg=C_BG)
+        btn_row.pack(fill='x', padx=6, pady=(4, 6))
+        styled_button(btn_row, 'Apply Limits', self._apply_limits).pack(
+            side='left', padx=(0, 4))
+        styled_button(btn_row, 'Clear',        self._clear_limits).pack(
+            side='left')
 
-        tabs = QTabWidget()
-        right_v.addWidget(tabs)
+        # ── Test Tree ──
+        filter_box = section('Filter Tests')
 
-        self.detail_panel = SiteDetailPanel()
-        tabs.addTab(self.detail_panel, '🔍 Die Detail')
+        tree_frame = tk.Frame(filter_box, bg=C_BG)
+        tree_frame.pack(fill='both', expand=True, padx=4, pady=4)
 
-        self.stats_panel = StatsPanel()
-        tabs.addTab(self.stats_panel, '📊 Statistics')
+        style = ttk.Style()
+        style.configure('Filter.Treeview',
+                        background=C_BG2, foreground=C_TEXT,
+                        fieldbackground=C_BG2, rowheight=20,
+                        font=('Courier', 9))
+        style.configure('Filter.Treeview.Heading',
+                        background=C_PANEL, foreground=C_ACCENT,
+                        font=('Courier', 9, 'bold'), relief='flat')
+        style.map('Filter.Treeview', background=[('selected', C_HOVER)])
 
-        main_h.addWidget(right)
+        self.test_tree = ttk.Treeview(tree_frame, show='tree',
+                                      style='Filter.Treeview',
+                                      selectmode='browse', height=8)
+        sb = ttk.Scrollbar(tree_frame, orient='vertical',
+                           command=self.test_tree.yview)
+        self.test_tree.configure(yscrollcommand=sb.set)
+        self.test_tree.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
+        self.test_tree.bind('<Double-1>', self._on_tree_double_click)
 
-        # Status bar
-        self.status = QStatusBar()
-        self.setStatusBar(self.status)
-        self.status.showMessage('Ready — open a KDF file to begin')
+    def _info_row(self, parent, label, value):
+        row = tk.Frame(parent, bg=C_BG)
+        row.pack(fill='x', padx=6, pady=1)
+        tk.Label(row, text=label, bg=C_BG, fg=C_TEXT_DIM,
+                 font=('Courier', 9), width=8, anchor='w').pack(side='left')
+        lbl = tk.Label(row, text=value, bg=C_BG, fg=C_TEXT,
+                       font=('Courier', 9), anchor='w')
+        lbl.pack(side='left', fill='x', expand=True)
+        return lbl
+
+    def _style_combobox(self):
+        s = ttk.Style()
+        s.configure('TCombobox',
+                    fieldbackground=C_PANEL,
+                    background=C_PANEL,
+                    foreground=C_TEXT,
+                    selectbackground=C_HOVER,
+                    selectforeground=C_TEXT,
+                    font=('Courier', 10))
+        s.map('TCombobox', fieldbackground=[('readonly', C_PANEL)])
 
     # ── File loading ─────────────────────────
 
     def open_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, 'Open KDF File', '', 'KDF Files (*.kdf);;All Files (*)')
+        path = filedialog.askopenfilename(
+            title='Open KDF File',
+            filetypes=[('KDF Files', '*.kdf'), ('All Files', '*.*')])
         if path:
             self._load_file(path)
 
@@ -837,7 +805,7 @@ class MainWindow(QMainWindow):
         try:
             header, sites, tests, mkeys = parse_kdf(path)
         except Exception as e:
-            QMessageBox.critical(self, 'Parse Error', f'Failed to read KDF file:\n{e}')
+            messagebox.showerror('Parse Error', f'Failed to read KDF file:\n{e}')
             return
 
         self._filepath = path
@@ -848,86 +816,88 @@ class MainWindow(QMainWindow):
         self._limits   = {}
         self._current_mkey = None
 
-        # Update file info labels
-        self.lbl_file.setText(f'  {os.path.basename(path)}')
-        self.lbl_lot.setText(header.get('LOT', '—'))
-        self.lbl_sys.setText(header.get('SYS', '—'))
-        self.lbl_stt.setText(header.get('STT', '—'))
-        self.lbl_sites_count.setText(str(len(sites)))
+        self.lbl_file.config(text=f'  {os.path.basename(path)}')
+        self.lbl_lot.config(text=header.get('LOT', '—'))
+        self.lbl_sys.config(text=header.get('SYS', '—'))
+        self.lbl_stt.config(text=header.get('STT', '—'))
+        self.lbl_nst.config(text=str(len(sites)))
 
-        # Populate measurement combo
-        self.mkey_combo.blockSignals(True)
-        self.mkey_combo.clear()
-        self.mkey_combo.addItems(mkeys)
-        self.mkey_combo.blockSignals(False)
+        self.mkey_combo['values'] = mkeys
+        self.mkey_combo.state(['!disabled'])
 
         # Populate test filter tree
-        self.test_tree.clear()
+        for item in self.test_tree.get_children():
+            self.test_tree.delete(item)
+
         test_to_params = defaultdict(list)
         for mk in mkeys:
             parts = mk.split('@')
             if len(parts) >= 2:
                 test_to_params[parts[1]].append(parts[0])
-        for test in sorted(test_to_params.keys()):
-            parent = QTreeWidgetItem(self.test_tree, [test])
-            parent.setForeground(0, QColor('#4fc3f7'))
-            parent.setExpanded(False)
-            for param in sorted(test_to_params[test]):
-                child = QTreeWidgetItem(parent, [f'{param}@{test}'])
-                child.setForeground(0, QColor('#bdc3c7'))
-        self.test_tree.itemDoubleClicked.connect(self._on_tree_double_click)
 
-        # Select first measurement and draw
+        for test in sorted(test_to_params):
+            parent_id = self.test_tree.insert('', 'end', text=test,
+                                              tags=('test',))
+            for param in sorted(test_to_params[test]):
+                self.test_tree.insert(parent_id, 'end',
+                                      text=f'{param}@{test}',
+                                      tags=('mkey',))
+
+        self.test_tree.tag_configure('test', foreground=C_ACCENT)
+        self.test_tree.tag_configure('mkey', foreground=C_TEXT_DIM)
+
         if mkeys:
             self._current_mkey = mkeys[0]
-            self.mkey_combo.setCurrentText(mkeys[0])
+            self.mkey_combo.set(mkeys[0])
             self._refresh_canvas()
 
         self._update_ui_state()
-        self.status.showMessage(
-            f'Loaded {len(sites)} sites, {len(mkeys)} measurements — {os.path.basename(path)}')
+        self.status_var.set(
+            f'Loaded {len(sites)} sites, {len(mkeys)} measurements — '
+            f'{os.path.basename(path)}')
 
-    def _on_tree_double_click(self, item, col):
-        mk = item.text(0)
-        if mk in self._mkeys:
-            self.mkey_combo.setCurrentText(mk)
+    def _on_tree_double_click(self, event):
+        item = self.test_tree.focus()
+        text = self.test_tree.item(item, 'text')
+        if text in self._mkeys:
+            self.mkey_combo.set(text)
+            self._on_mkey_changed(None)
 
     # ── Measurement & limits ─────────────────
 
-    def _on_mkey_changed(self, mkey):
+    def _on_mkey_changed(self, event):
+        mkey = self.mkey_combo.get()
         if mkey not in self._mkeys:
             return
         self._current_mkey = mkey
-        # Restore saved limits for this mkey
         lo, hi = self._limits.get(mkey, (None, None))
-        self.low_edit.setText(str(lo) if lo is not None else '')
-        self.high_edit.setText(str(hi) if hi is not None else '')
+        self.low_edit.delete(0, 'end')
+        self.high_edit.delete(0, 'end')
+        if lo is not None: self.low_edit.insert(0, str(lo))
+        if hi is not None: self.high_edit.insert(0, str(hi))
         self._refresh_canvas()
 
     def _apply_limits(self):
         lo = hi = None
         try:
-            txt = self.low_edit.text().strip()
-            if txt:
-                lo = float(txt)
+            txt = self.low_edit.get().strip()
+            if txt: lo = float(txt)
         except ValueError:
-            QMessageBox.warning(self, 'Invalid', 'Low limit must be a number.')
+            messagebox.showwarning('Invalid', 'Low limit must be a number.')
             return
         try:
-            txt = self.high_edit.text().strip()
-            if txt:
-                hi = float(txt)
+            txt = self.high_edit.get().strip()
+            if txt: hi = float(txt)
         except ValueError:
-            QMessageBox.warning(self, 'Invalid', 'High limit must be a number.')
+            messagebox.showwarning('Invalid', 'High limit must be a number.')
             return
-
         if self._current_mkey:
             self._limits[self._current_mkey] = (lo, hi)
         self._refresh_canvas()
 
     def _clear_limits(self):
-        self.low_edit.clear()
-        self.high_edit.clear()
+        self.low_edit.delete(0, 'end')
+        self.high_edit.delete(0, 'end')
         if self._current_mkey:
             self._limits[self._current_mkey] = (None, None)
         self._refresh_canvas()
@@ -937,19 +907,14 @@ class MainWindow(QMainWindow):
             return
         mkey = self._current_mkey
         lo, hi = self._limits.get(mkey, (None, None))
-
-        values = {}
-        for site in self._sites:
-            values[site['name']] = get_site_value(site, mkey)
-
+        values = {s['name']: get_site_value(s, mkey) for s in self._sites}
         self.canvas.load(self._sites, values, lo, hi, mkey=mkey)
         self.stats_panel.update_stats(values, lo, hi)
-        self.status.showMessage(
+        self.status_var.set(
             f'Showing: {mkey}  |  '
             f'Low={lo if lo is not None else "—"}  '
             f'High={hi if hi is not None else "—"}  |  '
-            f'{len(self._sites)} sites'
-        )
+            f'{len(self._sites)} sites')
 
     # ── Site click ────────────────────────────
 
@@ -960,27 +925,29 @@ class MainWindow(QMainWindow):
 
     def export_map(self):
         if not self._sites:
-            QMessageBox.information(self, 'Nothing to export', 'Load a KDF file first.')
+            messagebox.showinfo('Nothing to export', 'Load a KDF file first.')
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, 'Export Wafer Map', 'wafer_map.png',
-            'PNG Image (*.png);;JPEG Image (*.jpg)')
+        path = filedialog.asksaveasfilename(
+            title='Export Wafer Map',
+            defaultextension='.ps',
+            filetypes=[('PostScript', '*.ps'), ('All Files', '*.*')],
+            initialfile='wafer_map.ps')
         if not path:
             return
-        pixmap = self.canvas.grab()
-        if pixmap.save(path):
-            self.status.showMessage(f'Exported to {path}')
-            QMessageBox.information(self, 'Exported', f'Wafer map saved to:\n{path}')
-        else:
-            QMessageBox.critical(self, 'Error', 'Failed to save image.')
+        try:
+            self.canvas.postscript(file=path, colormode='color')
+            self.status_var.set(f'Exported to {path}')
+            messagebox.showinfo('Exported', f'Wafer map saved to:\n{path}')
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to save: {e}')
 
     # ── UI state ──────────────────────────────
 
     def _update_ui_state(self):
         has_data = bool(self._sites)
-        self.mkey_combo.setEnabled(has_data)
-        self.low_edit.setEnabled(has_data)
-        self.high_edit.setEnabled(has_data)
+        state = 'normal' if has_data else 'disabled'
+        self.low_edit.config(state=state)
+        self.high_edit.config(state=state)
 
 
 # ─────────────────────────────────────────────
@@ -988,18 +955,12 @@ class MainWindow(QMainWindow):
 # ─────────────────────────────────────────────
 
 def main():
-    app = QApplication(sys.argv)
-    app.setApplicationName('Wafer Map Viewer')
-    app.setStyle('Fusion')
-
     win = MainWindow()
-    win.show()
 
-    # Auto-load if a path was given on command line
     if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
-        win._load_file(sys.argv[1])
+        win.after(100, lambda: win._load_file(sys.argv[1]))
 
-    sys.exit(app.exec_())
+    win.mainloop()
 
 
 if __name__ == '__main__':
