@@ -356,33 +356,45 @@ class WaferCanvas(QWidget):
         n_cols = x1 - x0 + 1
         n_rows = y1 - y0 + 1
 
-        # Reserve space for the legend at the bottom so dies still fit
-        # "perfectly" without being covered. (The legend is drawn as an
-        # overlay, so we must account for it here.)
-        #
-        # legend box:
-        #   bh = len(items) * 22 + 16
-        #   ly = h - bh - 10
-        #   drawRoundedRect(QRectF(lx-6, ly-8, ...)) => top at ly-8
-        # => reserved_height = bh + 18
-        items_count = 3 if self._limits_active else 2
-        bh = items_count * 22 + 16
-        reserved_bottom = bh + 18
+        # Wafer circle is treated as fixed (fits the screen). We size the
+        # tiles to fit *inside* the fixed circle based on the number of
+        # columns/rows.
+        cx = w / 2.0
+        cy = h / 2.0
+        radius_max = min(cx, w - cx, cy, h - cy) - 0.5
+        disc_margin = 6.0  # small breathing room for pen + notch
+        radius = max(1.0, radius_max - disc_margin)
 
-        pad_left = 0
-        pad_right = 0
-        pad_top = 0
-        pad_bottom = reserved_bottom
+        # Upper bound so the die grid never exceeds widget bounds.
+        cell_hi = min(w / max(n_cols, 1), h / max(n_rows, 1))
+        cell_lo = 1.0
 
-        avail_w = max(1.0, w - (pad_left + pad_right))
-        avail_h = max(1.0, h - (pad_top + pad_bottom))
+        def fits(cell: float) -> bool:
+            # This must match how die rectangles are inset in paintEvent().
+            mg = max(1.5, cell * 0.04)
+            half_grid_w = cell * n_cols / 2.0 - mg
+            half_grid_h = cell * n_rows / 2.0 - mg
+            half_grid_w = max(0.0, half_grid_w)
+            half_grid_h = max(0.0, half_grid_h)
 
-        # Base cell size from rectangle fit (die grid fits inside widget).
-        cell_rect = min(avail_w / max(n_cols, 1),
-                         avail_h / max(n_rows, 1))
+            # distance from circle center to the farthest die corner
+            dist = math.hypot(half_grid_w, half_grid_h)
 
-        ox = (w - cell * n_cols) / 2
-        oy = pad_bottom + (avail_h - cell * n_rows) / 2
+            # keep a tiny clearance so rounded corners + stroke don't clip
+            return dist <= (radius - 0.8)
+
+        # Binary search for largest `cell` that fits in the fixed disc.
+        for _ in range(24):
+            cell_mid = (cell_lo + cell_hi) / 2.0
+            if fits(cell_mid):
+                cell_lo = cell_mid
+            else:
+                cell_hi = cell_mid
+
+        cell = cell_lo
+
+        ox = (w - cell * n_cols) / 2.0
+        oy = (h - cell * n_rows) / 2.0
         return ox, oy, cell
 
     def _die_color(self, name):
@@ -421,29 +433,12 @@ class WaferCanvas(QWidget):
         n_cols = x1 - x0 + 1
         n_rows = y1 - y0 + 1
 
-        # Centre of the die grid
-        cx = ox + cell * n_cols / 2
-        cy = oy + cell * n_rows / 2
-
-        # Wafer radius: tightly wrap the *actual drawn* die tiles.
-        # Dies are inset by `mg` (see the cell drawing loop), so the wafer
-        # radius must subtract that inset too; otherwise you'll see a gap
-        # between the disc edge and the tiles.
-        mg = max(1.5, cell * 0.04)
-        half_grid_w = cell * n_cols / 2 - mg
-        half_grid_h = cell * n_rows / 2 - mg
-        half_grid_w = max(0.0, half_grid_w)
-        half_grid_h = max(0.0, half_grid_h)
-        grid_corner_dist = math.hypot(half_grid_w, half_grid_h)
-        circle_clear_factor = 0.015  # tiny extra so pen/notch doesn't clip
-        radius = grid_corner_dist + cell * circle_clear_factor  # tight clearance only
-
-        # Safety clamp: ensure the disc itself stays within widget bounds.
-        # (The layout math should usually keep this unnecessary, but avoids
-        # edge cases due to rounding or small widget sizes.)
+        # Fixed wafer circle (does not depend on how many tiles there are).
+        cx = w / 2.0
+        cy = h / 2.0
         radius_max = min(cx, w - cx, cy, h - cy) - 0.5
-        if radius > radius_max:
-            radius = max(grid_corner_dist, radius_max)
+        disc_margin = 6.0
+        radius = max(1.0, radius_max - disc_margin)
 
         # ── disc shadow ───────────────────────────────────────────────────────
         shad = QRadialGradient(cx+4, cy+4, radius+4)
