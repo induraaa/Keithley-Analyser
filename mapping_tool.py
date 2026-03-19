@@ -381,24 +381,8 @@ class WaferCanvas(QWidget):
         cell_rect = min(avail_w / max(n_cols, 1),
                          avail_h / max(n_rows, 1))
 
-        # Additional cap so the wafer DISC (which wraps the grid corners)
-        # doesn't get clipped on smaller screens.
-        #
-        # In paintEvent():
-        #   grid_corner_dist = cell * hypot(n_cols/2, n_rows/2)
-        #   radius           = grid_corner_dist + cell * 0.05
-        #                 => radius = cell * (hypot(n_cols/2, n_rows/2) + 0.05)
-        # We cap 'cell' so radius fits within the widget.
-        k = math.hypot(n_cols / 2.0, n_rows / 2.0)
-        r_lim = min(w, h) / 2.0 - 3.0  # room for pen thickness + notch
-        cell = cell_rect
-        circle_clear_factor = 0.05
-        if r_lim > 0 and (k + circle_clear_factor) > 0:
-            cell_circle = r_lim / (k + circle_clear_factor)
-            cell = min(cell_rect, cell_circle)
-
         ox = (w - cell * n_cols) / 2
-        oy = (h - cell * n_rows) / 2
+        oy = pad_bottom + (avail_h - cell * n_rows) / 2
         return ox, oy, cell
 
     def _die_color(self, name):
@@ -441,14 +425,18 @@ class WaferCanvas(QWidget):
         cx = ox + cell * n_cols / 2
         cy = oy + cell * n_rows / 2
 
-        # Wafer radius: tightly wrap the die grid.
-        # Use the distance from the centre to the farthest die corner,
-        # plus a small margin (half a cell), so the circle sits just
-        # outside all the dies without a huge gap.
-        half_grid_w = cell * n_cols / 2
-        half_grid_h = cell * n_rows / 2
+        # Wafer radius: tightly wrap the *actual drawn* die tiles.
+        # Dies are inset by `mg` (see the cell drawing loop), so the wafer
+        # radius must subtract that inset too; otherwise you'll see a gap
+        # between the disc edge and the tiles.
+        mg = max(1.5, cell * 0.04)
+        half_grid_w = cell * n_cols / 2 - mg
+        half_grid_h = cell * n_rows / 2 - mg
+        half_grid_w = max(0.0, half_grid_w)
+        half_grid_h = max(0.0, half_grid_h)
         grid_corner_dist = math.hypot(half_grid_w, half_grid_h)
-        radius = grid_corner_dist + cell * 0.05  # tight clearance only
+        circle_clear_factor = 0.015  # tiny extra so pen/notch doesn't clip
+        radius = grid_corner_dist + cell * circle_clear_factor  # tight clearance only
 
         # Safety clamp: ensure the disc itself stays within widget bounds.
         # (The layout math should usually keep this unnecessary, but avoids
