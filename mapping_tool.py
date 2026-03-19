@@ -355,25 +355,46 @@ class WaferCanvas(QWidget):
     def _layout(self, x0, x1, y0, y1, w, h):
         n_cols = x1 - x0 + 1
         n_rows = y1 - y0 + 1
-        pad    = 48
+
+        # Reserve space for the legend at the bottom so dies still fit
+        # "perfectly" without being covered. (The legend is drawn as an
+        # overlay, so we must account for it here.)
+        #
+        # legend box:
+        #   bh = len(items) * 22 + 16
+        #   ly = h - bh - 10
+        #   drawRoundedRect(QRectF(lx-6, ly-8, ...)) => top at ly-8
+        # => reserved_height = bh + 18
+        items_count = 3 if self._limits_active else 2
+        bh = items_count * 22 + 16
+        reserved_bottom = bh + 18
+
+        pad_left = 0
+        pad_right = 0
+        pad_top = 0
+        pad_bottom = reserved_bottom
+
+        avail_w = max(1.0, w - (pad_left + pad_right))
+        avail_h = max(1.0, h - (pad_top + pad_bottom))
 
         # Base cell size from rectangle fit (die grid fits inside widget).
-        cell_rect = min((w - 2*pad) / max(n_cols, 1),
-                         (h - 2*pad) / max(n_rows, 1))
+        cell_rect = min(avail_w / max(n_cols, 1),
+                         avail_h / max(n_rows, 1))
 
         # Additional cap so the wafer DISC (which wraps the grid corners)
         # doesn't get clipped on smaller screens.
         #
         # In paintEvent():
         #   grid_corner_dist = cell * hypot(n_cols/2, n_rows/2)
-        #   radius           = grid_corner_dist + cell * 0.3
-        #                 => radius = cell * (hypot(n_cols/2, n_rows/2) + 0.3)
+        #   radius           = grid_corner_dist + cell * 0.05
+        #                 => radius = cell * (hypot(n_cols/2, n_rows/2) + 0.05)
         # We cap 'cell' so radius fits within the widget.
         k = math.hypot(n_cols / 2.0, n_rows / 2.0)
-        r_lim = min(w, h) / 2.0 - 6.0  # room for pen thickness + notch
+        r_lim = min(w, h) / 2.0 - 3.0  # room for pen thickness + notch
         cell = cell_rect
-        if r_lim > 0 and (k + 0.3) > 0:
-            cell_circle = r_lim / (k + 0.3)
+        circle_clear_factor = 0.05
+        if r_lim > 0 and (k + circle_clear_factor) > 0:
+            cell_circle = r_lim / (k + circle_clear_factor)
             cell = min(cell_rect, cell_circle)
 
         ox = (w - cell * n_cols) / 2
@@ -427,22 +448,22 @@ class WaferCanvas(QWidget):
         half_grid_w = cell * n_cols / 2
         half_grid_h = cell * n_rows / 2
         grid_corner_dist = math.hypot(half_grid_w, half_grid_h)
-        radius = grid_corner_dist + cell * 0.3   # small clearance only
+        radius = grid_corner_dist + cell * 0.05  # tight clearance only
 
         # Safety clamp: ensure the disc itself stays within widget bounds.
         # (The layout math should usually keep this unnecessary, but avoids
         # edge cases due to rounding or small widget sizes.)
-        radius_max = min(cx, w - cx, cy, h - cy) - 2.0
+        radius_max = min(cx, w - cx, cy, h - cy) - 0.5
         if radius > radius_max:
             radius = max(grid_corner_dist, radius_max)
 
         # ── disc shadow ───────────────────────────────────────────────────────
-        shad = QRadialGradient(cx+4, cy+4, radius+6)
+        shad = QRadialGradient(cx+4, cy+4, radius+4)
         shad.setColorAt(0,   QColor(0, 0, 0, 24))
         shad.setColorAt(0.8, QColor(0, 0, 0,  8))
         shad.setColorAt(1.0, QColor(0, 0, 0,  0))
         p.setBrush(QBrush(shad)); p.setPen(Qt.NoPen)
-        p.drawEllipse(QPointF(cx+4, cy+4), radius+6, radius+6)
+        p.drawEllipse(QPointF(cx+4, cy+4), radius+4, radius+4)
 
         # ── wafer disc ────────────────────────────────────────────────────────
         wg = QRadialGradient(cx - radius*0.15, cy - radius*0.2, radius*1.3)
@@ -456,10 +477,12 @@ class WaferCanvas(QWidget):
         # ── flat notch at bottom ──────────────────────────────────────────────
         nw = radius * 0.22
         p.setPen(Qt.NoPen); p.setBrush(QColor(T['bg_app']))
-        p.drawRect(QRectF(cx - nw/2, cy + radius - 5, nw, 8))
+        # Keep the notch inside the disc edge so the disc won't need
+        # extra "padding" to avoid clipping.
+        p.drawRect(QRectF(cx - nw/2, cy + radius - 6, nw, 6))
         p.setPen(QPen(QColor(T['wafer_edge']), 2))
-        p.drawLine(QPointF(cx - nw/2, cy + radius - 3),
-                   QPointF(cx + nw/2, cy + radius - 3))
+        p.drawLine(QPointF(cx - nw/2, cy + radius - 4),
+                   QPointF(cx + nw/2, cy + radius - 4))
 
         # ── die cells ─────────────────────────────────────────────────────────
         fs   = max(7, int(cell * 0.15))
