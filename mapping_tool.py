@@ -362,7 +362,7 @@ class WaferCanvas(QWidget):
         cx = w / 2.0
         cy = h / 2.0
         radius_max = min(cx, w - cx, cy, h - cy) - 0.5
-        disc_margin = 4.0  # small breathing room for pen + notch
+        disc_margin = 2.0  # breathing room for pen + notch
         radius = max(1.0, radius_max - disc_margin)
 
         # Upper bound so the die grid never exceeds widget bounds.
@@ -371,7 +371,7 @@ class WaferCanvas(QWidget):
 
         def fits(cell: float) -> bool:
             # This must match how die rectangles are inset in paintEvent().
-            mg = max(1.2, cell * 0.035)
+            mg = max(1.0, cell * 0.03)
             half_grid_w = cell * n_cols / 2.0 - mg
             half_grid_h = cell * n_rows / 2.0 - mg
             half_grid_w = max(0.0, half_grid_w)
@@ -381,7 +381,7 @@ class WaferCanvas(QWidget):
             dist = math.hypot(half_grid_w, half_grid_h)
 
             # keep a tiny clearance so rounded corners + stroke don't clip
-            return dist <= (radius - 0.5)
+            return dist <= (radius - 0.3)
 
         # Binary search for largest `cell` that fits in the fixed disc.
         for _ in range(24):
@@ -437,7 +437,7 @@ class WaferCanvas(QWidget):
         cx = w / 2.0
         cy = h / 2.0
         radius_max = min(cx, w - cx, cy, h - cy) - 0.5
-        disc_margin = 4.0
+        disc_margin = 2.0
         radius = max(1.0, radius_max - disc_margin)
 
         # ── disc shadow ───────────────────────────────────────────────────────
@@ -474,7 +474,7 @@ class WaferCanvas(QWidget):
         self._rects = {}
 
         for site in self.sites:
-            mg   = max(1.2, cell * 0.035)
+            mg   = max(1.0, cell * 0.03)
             px_  = ox + (site['x'] - x0) * cell
             py_  = oy + (y1 - site['y']) * cell
             rect = QRectF(px_ + mg, py_ + mg, cell - 2*mg, cell - 2*mg)
