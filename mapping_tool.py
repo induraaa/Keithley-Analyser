@@ -1,5 +1,5 @@
 """
-Wafer Map Viewer  —  Keithley ACS KDF V1.0
+Wafer Map Viewer  —  Keithley ACS KDF V1.2
 Displays any KDF file as an interactive wafer map.
 Subsite number = design number; switch designs via the Design selector.
 
@@ -1162,7 +1162,8 @@ class MainWindow(QMainWindow):
         painter.setRenderHint(QPainter.TextAntialiasing)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.scale(SCALE, SCALE)
-        self.canvas.render(painter)
+        # PySide6 compatibility: some builds require an explicit targetOffset.
+        self.canvas.render(painter, QPoint(0, 0))
         painter.end()
 
         fmt = b'PNG'
