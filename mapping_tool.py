@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QToolBar, QSizePolicy, QPushButton, QSpinBox,
     QStyle, QStyleOptionComboBox
 )
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSize, QRect
+from PySide6.QtCore import Qt, QRectF, QPointF, QPoint, Signal, QSize, QRect
 from PySide6.QtGui import (
     QPainter, QColor, QBrush, QPen, QFont,
     QLinearGradient, QRadialGradient, QPixmap, QIcon, QAction,
@@ -706,6 +706,21 @@ class SiteDetailPanel(QWidget):
         self.table.setShowGrid(False)
         lo.addWidget(self.table)
 
+        self._design_colors = [
+            QColor("#1565c0"),  # blue
+            QColor("#2e7d32"),  # green
+            QColor("#6a1b9a"),  # purple
+            QColor("#c62828"),  # red
+            QColor("#ef6c00"),  # orange
+            QColor("#00838f"),  # teal
+            QColor("#4e342e"),  # brown
+            QColor("#455a64"),  # blue-grey
+        ]
+
+    def _design_color(self, design_num: int) -> QColor:
+        # stable color assignment per design number
+        return self._design_colors[(design_num - 1) % len(self._design_colors)]
+
     def show_site(self, site: dict):
         self.title.setText(
             f'  {site["name"]}   ·   X = {site["x"]},  Y = {site["y"]}')
@@ -725,12 +740,27 @@ class SiteDetailPanel(QWidget):
             si.setTextAlignment(Qt.AlignCenter)
             si.setForeground(QColor(T['text_secondary']))
             si.setFont(QFont('Segoe UI', 12))
+
+            # If multiple designs exist for this die, color-code by design number.
+            if len(site.get('subsites', {})) > 1:
+                c = self._design_color(int(sub))
+                si.setForeground(QColor("#ffffff"))
+                si.setBackground(c)
+
             self.table.setItem(i, 1, si)
 
             display = si_fmt(val) if (val is not None and math.isfinite(val)) else 'N/A'
             vi = QTableWidgetItem(display)
             vi.setForeground(QColor(T['accent_dark']))
             vi.setFont(QFont('Consolas', 12, QFont.Bold))
+
+            if len(site.get('subsites', {})) > 1:
+                c = self._design_color(int(sub))
+                tint = QColor(c)
+                tint.setAlpha(22)
+                vi.setBackground(tint)
+                mi.setBackground(tint)
+
             self.table.setItem(i, 2, vi)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -842,7 +872,15 @@ class MainWindow(QMainWindow):
         tb.addWidget(sp)
         self.lbl_file = QLabel('No file loaded  ')
         self.lbl_file.setStyleSheet(
-            f'color:{T["text_secondary"]};font-size:12px;padding-right:10px;')
+            f'color:{T["accent_dark"]};'
+            f'font-size:12px;'
+            f'font-weight:700;'
+            f'padding:4px 10px;'
+            f'background:{T["accent_dim"]};'
+            f'border:1px solid {T["border_hi"]};'
+            f'border-radius:10px;'
+            f'min-height:22px;'
+        )
         tb.addWidget(self.lbl_file)
 
         cw = QWidget(); self.setCentralWidget(cw)
@@ -1134,8 +1172,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, 'Nothing to export',
                                     'Load a KDF file first.')
             return
+
+        default_name = 'wafer_map.png'
+        if self._filepath:
+            base = os.path.splitext(os.path.basename(self._filepath))[0]
+            default_name = f'{base}.png'
+
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, 'Export Wafer Map', 'wafer_map.png',
+            self, 'Export Wafer Map', default_name,
             'PNG Image (*.png);;JPEG Image (*.jpg)')
         if not path:
             return
@@ -1209,3 +1253,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
