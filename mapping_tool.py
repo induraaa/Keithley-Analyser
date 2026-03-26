@@ -728,10 +728,20 @@ class _DesignTintDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option, index):
         design_num = index.data(self._role_design)
         if isinstance(design_num, int):
-            c = QColor(self._color_for_design(design_num))
-            c.setAlpha(34)  # visible but still subtle
+            base = QColor(self._color_for_design(design_num))
+
+            # Professional look: very subtle row wash + a clean left accent stripe.
+            c = QColor(base)
+            c.setAlpha(18)
             painter.save()
             painter.fillRect(option.rect, c)
+
+            # Accent stripe only on first column to avoid looking "busy".
+            if index.column() == 0:
+                stripe = QColor(base)
+                stripe.setAlpha(170)
+                r = option.rect
+                painter.fillRect(QRect(r.x(), r.y(), 4, r.height()), stripe)
             painter.restore()
 
         super().paint(painter, option, index)
@@ -757,13 +767,14 @@ class SiteDetailPanel(QWidget):
         hh.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
+        # Alternating row colors fight with design tinting; keep the look clean.
+        self.table.setAlternatingRowColors(False)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         # Prevent global QSS hover/selection from wiping our design tint.
         self.table.setStyleSheet(
-            f"QTableWidget::item:hover{{background-color: rgba(0,0,0,0);}}"
-            f"QTableWidget::item:selected{{background-color: rgba(0,0,0,0);}}"
+            f"QTableWidget::item:hover{{background-color: rgba(0,0,0,0); border:1px solid {T['border']};}}"
+            f"QTableWidget::item:selected{{background-color: rgba(0,0,0,0); border:1px solid {T['accent']}; color:{T['accent_dark']};}}"
         )
         lo.addWidget(self.table)
 
