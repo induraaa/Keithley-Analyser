@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QFormLayout, QStatusBar, QComboBox,
     QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QToolBar, QSizePolicy, QPushButton, QSpinBox,
-    QStyle, QStyleOptionComboBox
+    QStyle, QStyleOptionComboBox, QStyledItemDelegate
 )
 from PySide6.QtCore import Qt, QRectF, QPointF, QPoint, Signal, QSize, QRect
 from PySide6.QtGui import (
@@ -716,6 +716,27 @@ class WaferCanvas(QWidget):
 #  DIE DETAIL PANEL
 # ─────────────────────────────────────────────────────────────────────────────
 
+class _DesignTintDelegate(QStyledItemDelegate):
+    def __init__(self, colors: list[QColor], role_design: int, parent=None):
+        super().__init__(parent)
+        self._colors = colors
+        self._role_design = role_design
+
+    def _color_for_design(self, design_num: int) -> QColor:
+        return self._colors[(design_num - 1) % len(self._colors)]
+
+    def paint(self, painter: QPainter, option, index):
+        design_num = index.data(self._role_design)
+        if isinstance(design_num, int):
+            c = QColor(self._color_for_design(design_num))
+            c.setAlpha(34)  # visible but still subtle
+            painter.save()
+            painter.fillRect(option.rect, c)
+            painter.restore()
+
+        super().paint(painter, option, index)
+
+
 class SiteDetailPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -739,6 +760,11 @@ class SiteDetailPanel(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
+        # Prevent global QSS hover/selection from wiping our design tint.
+        self.table.setStyleSheet(
+            f"QTableWidget::item:hover{{background-color: rgba(0,0,0,0);}}"
+            f"QTableWidget::item:selected{{background-color: rgba(0,0,0,0);}}"
+        )
         lo.addWidget(self.table)
 
         self._design_colors = [
@@ -751,6 +777,8 @@ class SiteDetailPanel(QWidget):
             QColor("#4e342e"),  # brown
             QColor("#455a64"),  # blue-grey
         ]
+        self._role_design = int(Qt.UserRole) + 1
+        self.table.setItemDelegate(_DesignTintDelegate(self._design_colors, self._role_design, self.table))
 
     def _design_color(self, design_num: int) -> QColor:
         # stable color assignment per design number
@@ -768,24 +796,20 @@ class SiteDetailPanel(QWidget):
         self.table.setRowCount(len(rows))
         for i, (mkey, sub, val) in enumerate(rows):
             multi = len(site.get('subsites', {})) > 1
-            tint = None
-            if multi:
-                c = self._design_color(int(sub))
-                tint = QColor(c)
-                tint.setAlpha(28)  # subtle but visible banding
+            design_num = int(sub) if multi else None
 
             mi = QTableWidgetItem(mkey)
             mi.setFont(QFont('Segoe UI', 12))
-            if tint is not None:
-                mi.setBackground(tint)
+            if design_num is not None:
+                mi.setData(self._role_design, design_num)
             self.table.setItem(i, 0, mi)
 
             si = QTableWidgetItem(str(sub))
             si.setTextAlignment(Qt.AlignCenter)
             si.setForeground(QColor(T['text_secondary']))
             si.setFont(QFont('Segoe UI', 12))
-            if tint is not None:
-                si.setBackground(tint)
+            if design_num is not None:
+                si.setData(self._role_design, design_num)
                 si.setForeground(QColor(T['text_primary']))
 
             self.table.setItem(i, 1, si)
@@ -795,8 +819,8 @@ class SiteDetailPanel(QWidget):
             vi.setForeground(QColor(T['accent_dark']))
             vi.setFont(QFont('Consolas', 12, QFont.Bold))
 
-            if tint is not None:
-                vi.setBackground(tint)
+            if design_num is not None:
+                vi.setData(self._role_design, design_num)
 
             self.table.setItem(i, 2, vi)
 
