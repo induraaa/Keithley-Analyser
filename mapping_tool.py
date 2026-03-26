@@ -500,7 +500,6 @@ class WaferCanvas(QWidget):
         self.selected_site = None
         self._hover        = None
         self._rects        = {}
-        self._zoom         = 1.0
 
         self.setMinimumSize(400, 400)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -557,28 +556,6 @@ class WaferCanvas(QWidget):
         oy = (h - cell * n_rows) / 2.0
         return ox, oy, cell
 
-    def zoom_in(self):
-        self.set_zoom(self._zoom * 1.15)
-
-    def zoom_out(self):
-        self.set_zoom(self._zoom / 1.15)
-
-    def reset_zoom(self):
-        self.set_zoom(1.0)
-
-    def set_zoom(self, z: float):
-        z = max(0.6, min(3.5, float(z)))
-        if abs(z - self._zoom) < 1e-6:
-            return
-        self._zoom = z
-        self.update()
-
-    def _to_logical(self, pos: QPointF) -> QPointF:
-        # Map device/widget coordinates -> logical coordinates used for drawing.
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-        return QPointF((pos.x() - cx) / self._zoom + cx, (pos.y() - cy) / self._zoom + cy)
-
     def _die_color(self, name):
         v = self.values.get(name)
         if v is None:
@@ -609,28 +586,12 @@ class WaferCanvas(QWidget):
             p.drawText(self.rect(), Qt.AlignCenter, 'Open a KDF file to begin')
             return
 
-        # Zoom the wafer content around the view center, but keep UI overlays (legend) unzoomed.
-        cx_dev = w / 2.0
-        cy_dev = h / 2.0
-        p.save()
-        p.translate(cx_dev, cy_dev)
-        p.scale(self._zoom, self._zoom)
-        p.translate(-cx_dev, -cy_dev)
-
-        # Use a logical viewport size so the wafer can effectively "zoom" within the widget.
-        lw = w / self._zoom
-        lh = h / self._zoom
-        lx0 = cx_dev - lw / 2.0
-        ly0 = cy_dev - lh / 2.0
-
         x0, x1, y0, y1 = self._bounds()
-        ox, oy, cell    = self._layout(x0, x1, y0, y1, lw, lh)
-        ox += lx0
-        oy += ly0
+        ox, oy, cell    = self._layout(x0, x1, y0, y1, w, h)
 
-        cx = cx_dev
-        cy = cy_dev
-        radius_max = min(lw / 2.0, lh / 2.0) - 0.5
+        cx = w / 2.0
+        cy = h / 2.0
+        radius_max = min(cx, w - cx, cy, h - cy) - 0.5
         disc_margin = 2.0
         radius = max(1.0, radius_max - disc_margin)
 
@@ -700,7 +661,6 @@ class WaferCanvas(QWidget):
                 p.drawText(cr, Qt.AlignLeft | Qt.AlignTop,
                            f"{site['x']},{site['y']}")
 
-        p.restore()
         self._draw_legend(p, w, h)
 
     def _draw_legend(self, p, w, h):
@@ -727,7 +687,7 @@ class WaferCanvas(QWidget):
             ly += 22
 
     def mouseMoveEvent(self, e):
-        pos = self._to_logical(QPointF(e.position())); self._hover = None
+        pos = QPointF(e.position()); self._hover = None
         for site in self.sites:
             r = self._rects.get(site['name'])
             if r and r.contains(pos):
@@ -740,7 +700,7 @@ class WaferCanvas(QWidget):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            pos = self._to_logical(QPointF(e.position()))
+            pos = QPointF(e.position())
             for site in self.sites:
                 r = self._rects.get(site['name'])
                 if r and r.contains(pos):
@@ -757,16 +717,18 @@ class WaferCanvas(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class _DesignTintDelegate(QStyledItemDelegate):
-    def __init__(self, colors: list[QColor], role_design: int, parent=None):
+    def __init__(self, colors: list[QColor], role_design: int, role_highlight: int, parent=None):
         super().__init__(parent)
         self._colors = colors
         self._role_design = role_design
+        self._role_highlight = role_highlight
 
     def _color_for_design(self, design_num: int) -> QColor:
         return self._colors[(design_num - 1) % len(self._colors)]
 
     def paint(self, painter: QPainter, option, index):
         design_num = index.data(self._role_design)
+        is_hi = bool(index.data(self._role_highlight))
         if isinstance(design_num, int):
             base = QColor(self._color_for_design(design_num))
 
@@ -782,6 +744,17 @@ class _DesignTintDelegate(QStyledItemDelegate):
                 stripe.setAlpha(170)
                 r = option.rect
                 painter.fillRect(QRect(r.x(), r.y(), 4, r.height()), stripe)
+            painter.restore()
+
+        # Measurement highlight (when selected on the left): a soft accent overlay + left accent bar.
+        if is_hi:
+            painter.save()
+            overlay = QColor(T['accent_dim'])
+            overlay.setAlpha(90)
+            painter.fillRect(option.rect, overlay)
+            if index.column() == 0:
+                r = option.rect
+                painter.fillRect(QRect(r.x(), r.y(), 4, r.height()), QColor(T['accent']))
             painter.restore()
 
         super().paint(painter, option, index)
@@ -829,9 +802,40 @@ class SiteDetailPanel(QWidget):
             QColor("#455a64"),  # blue-grey
         ]
         self._role_design = int(Qt.UserRole) + 1
+        self._role_highlight = int(Qt.UserRole) + 2
+        self._highlight_mkey: str | None = None
         self.table.setItemDelegate(
-            _DesignTintDelegate(self._design_colors, self._role_design, self.table)
+            _DesignTintDelegate(self._design_colors, self._role_design, self._role_highlight, self.table)
         )
+
+    def set_highlight_measurement(self, mkey: str | None):
+        self._highlight_mkey = mkey
+        self._apply_highlight()
+
+    def _apply_highlight(self):
+        if self.table.rowCount() == 0:
+            return
+
+        target = self._highlight_mkey
+        first_match_row = None
+        for r in range(self.table.rowCount()):
+            mi = self.table.item(r, 0)
+            is_match = bool(target) and (mi is not None) and (mi.text() == target)
+            for c in range(self.table.columnCount()):
+                it = self.table.item(r, c)
+                if it is not None:
+                    it.setData(self._role_highlight, is_match)
+                    if is_match:
+                        it.setForeground(QColor(T['accent_dark']))
+                        f = it.font()
+                        f.setBold(True)
+                        it.setFont(f)
+            if is_match and first_match_row is None:
+                first_match_row = r
+
+        self.table.viewport().update()
+        if first_match_row is not None:
+            self.table.scrollToItem(self.table.item(first_match_row, 0), QTableWidget.PositionAtCenter)
 
     def _design_color(self, design_num: int) -> QColor:
         # stable color assignment per design number
@@ -876,6 +880,9 @@ class SiteDetailPanel(QWidget):
                 vi.setData(self._role_design, design_num)
 
             self.table.setItem(i, 2, vi)
+
+        # Re-apply highlight after re-populating the table.
+        self._apply_highlight()
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  STATISTICS PANEL
@@ -973,6 +980,9 @@ class MainWindow(QMainWindow):
         tb.setIconSize(QSize(18, 18)); tb.setMovable(False)
         self.addToolBar(tb)
 
+        # Create early so toolbar actions can reference it.
+        self.canvas = WaferCanvas()
+
         open_act = QAction('  Open KDF…', self)
         open_act.triggered.connect(self.open_file)
         tb.addAction(open_act)
@@ -994,6 +1004,7 @@ class MainWindow(QMainWindow):
         tb.addAction(zoom_in)
 
         zoom_reset = QAction('  Reset Zoom', self)
+        zoom_reset.setToolTip('Reset zoom')
         zoom_reset.triggered.connect(self.canvas.reset_zoom)
         tb.addAction(zoom_reset)
         tb.addSeparator()
@@ -1098,7 +1109,6 @@ class MainWindow(QMainWindow):
             f'background:{T["bg_panel"]};border:1px solid {T["border"]};'
             f'border-radius:12px;')
         cl = QVBoxLayout(canvas_wrap); cl.setContentsMargins(4, 4, 4, 4)
-        self.canvas = WaferCanvas()
         self.canvas.siteClicked.connect(self._on_die_clicked)
         cl.addWidget(self.canvas)
         mh.addWidget(canvas_wrap, stretch=3)
@@ -1211,6 +1221,7 @@ class MainWindow(QMainWindow):
         lo, hi = self._limits.get(mkey, (None, None))
         self.low_edit.setText('' if lo is None else str(lo))
         self.high_edit.setText('' if hi is None else str(hi))
+        self.detail_panel.set_highlight_measurement(mkey)
         self._refresh_canvas()
 
     def _apply_limits(self):
@@ -1264,6 +1275,7 @@ class MainWindow(QMainWindow):
 
     def _on_die_clicked(self, site: dict):
         self.detail_panel.show_site(site)
+        self.detail_panel.set_highlight_measurement(self._current_mkey)
 
     # ── export ────────────────────────────────────────────────────────────────
 
