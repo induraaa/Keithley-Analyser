@@ -1161,16 +1161,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(
             f'Wafer Map Viewer  ·  {header.get("LOT", os.path.basename(path))}')
 
-        self.design_combo.blockSignals(True)
-        self.design_combo.clear()
-        if len(subs) > 1:
-            self.design_combo.addItem('All designs (average)', None)
-        for sn in subs:
-            self.design_combo.addItem(f'Design {sn}', sn)
-        default_idx = 1 if len(subs) > 1 else 0
-        self.design_combo.setCurrentIndex(default_idx)
-        self._current_sub = self.design_combo.itemData(default_idx)
-        self.design_combo.blockSignals(False)
+        # Build design selector (may be sorted by pass count once limits are active).
+        self._rebuild_design_combo()
 
         self.mkey_combo.blockSignals(True)
         self.mkey_combo.clear()
@@ -1190,6 +1182,60 @@ class MainWindow(QMainWindow):
             f'{len(subs)} design(s)  ·  {os.path.basename(path)}')
 
     # ── design / measurement / limits ─────────────────────────────────────────
+
+    def _rebuild_design_combo(self):
+        """Populate design selector, optionally sorted by pass count when limits are active."""
+        subs = list(self._all_subsites or [])
+        if not subs:
+            return
+
+        # Preserve current selection if possible.
+        prev_sub = self._current_sub
+
+        mkey = self._current_mkey
+        lo = hi = None
+        if mkey:
+            lo, hi = self._limits.get(mkey, (None, None))
+        limits_active = (lo is not None or hi is not None) and bool(mkey)
+
+        def pass_count_for(sub_num: int) -> int:
+            cnt = 0
+            for s in self._sites:
+                v = get_site_value(s, mkey, sub_num)
+                if v is None:
+                    continue
+                if (lo is None or v >= lo) and (hi is None or v <= hi):
+                    cnt += 1
+            return cnt
+
+        ordered = subs
+        pass_counts: dict[int, int] = {}
+        if limits_active:
+            pass_counts = {sn: pass_count_for(sn) for sn in subs}
+            ordered = sorted(subs, key=lambda sn: (pass_counts.get(sn, 0), -sn), reverse=True)
+
+        self.design_combo.blockSignals(True)
+        self.design_combo.clear()
+        if len(subs) > 1:
+            self.design_combo.addItem('All designs (average)', None)
+
+        for sn in ordered:
+            if limits_active:
+                pc = pass_counts.get(sn, 0)
+                self.design_combo.addItem(f'Design {sn}  ·  Pass {pc}', sn)
+            else:
+                self.design_combo.addItem(f'Design {sn}', sn)
+
+        # Restore selection if possible; otherwise pick first real design (or only).
+        if prev_sub is None and len(subs) > 1:
+            idx = 0
+        else:
+            idx = self.design_combo.findData(prev_sub)
+            if idx < 0:
+                idx = 1 if len(subs) > 1 else 0
+        self.design_combo.setCurrentIndex(idx)
+        self._current_sub = self.design_combo.itemData(idx)
+        self.design_combo.blockSignals(False)
 
     def _on_design_changed(self, idx: int):
         if idx < 0:
@@ -1214,6 +1260,7 @@ class MainWindow(QMainWindow):
         lo, hi = self._limits.get(mkey, (None, None))
         self.low_edit.setText('' if lo is None else str(lo))
         self.high_edit.setText('' if hi is None else str(hi))
+        self._rebuild_design_combo()
         self._refresh_canvas()
 
     def _apply_limits(self):
@@ -1225,12 +1272,14 @@ class MainWindow(QMainWindow):
             return
         if self._current_mkey:
             self._limits[self._current_mkey] = (lo, hi)
+        self._rebuild_design_combo()
         self._refresh_canvas()
 
     def _clear_limits(self):
         self.low_edit.clear(); self.high_edit.clear()
         if self._current_mkey:
             self._limits[self._current_mkey] = (None, None)
+        self._rebuild_design_combo()
         self._refresh_canvas()
 
     def _parse_limit(self, text: str, label: str = '') -> float | None:
