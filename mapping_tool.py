@@ -147,6 +147,15 @@ QComboBox QAbstractItemView{
     color:""" + T['text_primary'] + """;
     font-size:13px;
     padding:4px;
+    outline:0;
+}
+/* Remove extra popup frame/separator lines (common on Windows) */
+QComboBoxPrivateContainer{
+    border:none;
+    background:transparent;
+}
+QComboBoxPrivateContainer QFrame{
+    border:none;
 }
 QLineEdit,QSpinBox{
     background-color:""" + T['bg_panel'] + """;
