@@ -1198,20 +1198,26 @@ class MainWindow(QMainWindow):
             lo, hi = self._limits.get(mkey, (None, None))
         limits_active = (lo is not None or hi is not None) and bool(mkey)
 
-        def pass_count_for(sub_num: int) -> int:
-            cnt = 0
+        def pass_and_total_for(sub_num: int) -> tuple[int, int]:
+            passed = 0
+            total = 0
             for s in self._sites:
                 v = get_site_value(s, mkey, sub_num)
                 if v is None:
                     continue
+                total += 1
                 if (lo is None or v >= lo) and (hi is None or v <= hi):
-                    cnt += 1
-            return cnt
+                    passed += 1
+            return passed, total
 
         ordered = subs
         pass_counts: dict[int, int] = {}
+        total_counts: dict[int, int] = {}
         if limits_active:
-            pass_counts = {sn: pass_count_for(sn) for sn in subs}
+            for sn in subs:
+                p, t = pass_and_total_for(sn)
+                pass_counts[sn] = p
+                total_counts[sn] = t
             ordered = sorted(subs, key=lambda sn: (pass_counts.get(sn, 0), -sn), reverse=True)
 
         self.design_combo.blockSignals(True)
@@ -1222,7 +1228,9 @@ class MainWindow(QMainWindow):
         for sn in ordered:
             if limits_active:
                 pc = pass_counts.get(sn, 0)
-                self.design_combo.addItem(f'Design {sn}  ·  Pass {pc}', sn)
+                tc = total_counts.get(sn, 0)
+                pct = (pc / tc * 100.0) if tc else 0.0
+                self.design_combo.addItem(f'Design {sn}  ·  Pass {pc}/{tc} ({pct:.1f}%)', sn)
             else:
                 self.design_combo.addItem(f'Design {sn}', sn)
 
