@@ -141,7 +141,7 @@ QComboBox::down-arrow{
 }
 QComboBox QAbstractItemView{
     background:""" + T['bg_panel'] + """;
-    border:1px solid """ + T['border_hi'] + """;
+    border:none;
     border-radius:8px;
     selection-background-color:""" + T['accent_dim'] + """;
     color:""" + T['text_primary'] + """;
@@ -149,13 +149,21 @@ QComboBox QAbstractItemView{
     padding:4px;
     outline:0;
 }
-/* Remove extra popup frame/separator lines (common on Windows) */
+/* ComboBox popup: avoid double frame (common on Windows) */
 QComboBoxPrivateContainer{
-    border:none;
-    background:transparent;
+    background:""" + T['bg_panel'] + """;
+    border:1px solid """ + T['border_hi'] + """;
+    border-radius:8px;
+    padding:0px;
+    margin:0px;
 }
 QComboBoxPrivateContainer QFrame{
     border:none;
+}
+QComboBoxPrivateContainer QListView{
+    border:none;
+    background:""" + T['bg_panel'] + """;
+    outline:0;
 }
 QLineEdit,QSpinBox{
     background-color:""" + T['bg_panel'] + """;
