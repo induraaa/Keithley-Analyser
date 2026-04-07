@@ -165,6 +165,17 @@ QComboBoxPrivateContainer QListView{
     background:""" + T['bg_panel'] + """;
     outline:0;
 }
+QComboBoxPrivateContainer QAbstractScrollArea{
+    border:none;
+}
+QComboBoxPrivateContainer QAbstractScrollArea::viewport{
+    background:""" + T['bg_panel'] + """;
+    border:none;
+}
+QComboBoxPrivateContainer *{
+    border:none;
+    outline:0;
+}
 QLineEdit,QSpinBox{
     background-color:""" + T['bg_panel'] + """;
     border:1px solid """ + T['border'] + """;
