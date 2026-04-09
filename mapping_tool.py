@@ -9,7 +9,6 @@ Usage:         python wafer_mapper_light.py [file.kdf]
 
 import sys, os, re, math, statistics
 from collections import defaultdict
-from dataclasses import dataclass, field
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -536,47 +535,6 @@ def si_fmt(v: float | None) -> str:
     return f"{text}{best_suffix}"
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  WAFER DATA  (holds parsed data for one wafer in a batch)
-# ─────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class WaferData:
-    filepath:    str
-    wafer_id:    str          # derived from filename
-    header:      dict
-    sites:       list
-    mkeys:       list
-    tests:       list
-    subsites:    list = field(default_factory=list)
-
-    def yield_stats(self, mkey: str, sub: int | None,
-                    lo: float | None, hi: float | None) -> dict:
-        """Return pass/fail/nodata counts and numeric stats for this wafer."""
-        vals, passed, failed, nodata = [], 0, 0, 0
-        for s in self.sites:
-            v = get_site_value(s, mkey, sub)
-            if v is None:
-                nodata += 1
-            else:
-                vals.append(v)
-                ok = (lo is None or v >= lo) and (hi is None or v <= hi)
-                if ok:
-                    passed += 1
-                else:
-                    failed += 1
-        total = passed + failed
-        return dict(
-            passed=passed, failed=failed, nodata=nodata,
-            total=total,
-            yield_pct=(passed / total * 100) if total else None,
-            mean=statistics.mean(vals) if vals else None,
-            stdev=statistics.pstdev(vals) if vals else None,
-            min_v=min(vals) if vals else None,
-            max_v=max(vals) if vals else None,
-        )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 #  WAFER CANVAS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1037,463 +995,6 @@ class StatsPanel(QWidget):
             self.table.setItem(i, 1, vi)
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  BATCH WAFER THUMBNAIL  (small clickable wafer map for the batch grid)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class BatchWaferThumb(QWidget):
-    """A compact, clickable wafer map thumbnail used in the batch grid."""
-    clicked = Signal(object)  # emits WaferData
-
-    THUMB_SIZE = 170
-
-    def __init__(self, wafer: WaferData, parent=None):
-        super().__init__(parent)
-        self.wafer      = wafer
-        self._values:   dict = {}
-        self._lo:       float | None = None
-        self._hi:       float | None = None
-        self._selected  = False
-        self._yield_pct: float | None = None
-
-        self.setFixedSize(self.THUMB_SIZE, self.THUMB_SIZE + 36)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(wafer.wafer_id)
-
-    def update_data(self, values: dict, lo, hi, yield_pct):
-        self._values    = values
-        self._lo        = lo
-        self._hi        = hi
-        self._yield_pct = yield_pct
-        self.update()
-
-    def set_selected(self, sel: bool):
-        self._selected = sel
-        self.update()
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self.clicked.emit(self.wafer)
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.TextAntialiasing)
-
-        W = self.THUMB_SIZE
-        # Card background
-        card_rect = QRectF(0, 0, W, W)
-        if self._selected:
-            p.setBrush(QColor(T['accent_dim']))
-            p.setPen(QPen(QColor(T['accent']), 2.5))
-        else:
-            p.setBrush(QColor(T['bg_panel']))
-            p.setPen(QPen(QColor(T['border']), 1))
-        p.drawRoundedRect(card_rect, 10, 10)
-
-        # ── draw mini wafer ───────────────────────────────────────────────────
-        sites  = self.wafer.sites
-        margin = 10
-        draw_w = W - margin * 2
-        draw_h = W - margin * 2
-
-        if sites:
-            xs = [s['x'] for s in sites]; ys = [s['y'] for s in sites]
-            x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-            n_cols = x1 - x0 + 1; n_rows = y1 - y0 + 1
-
-            cx = W / 2.0; cy = W / 2.0
-            radius = min(draw_w, draw_h) / 2.0 - 1.0
-
-            # wafer disc
-            wg = QRadialGradient(cx - radius*0.1, cy - radius*0.15, radius*1.2)
-            wg.setColorAt(0,   QColor('#ffffff'))
-            wg.setColorAt(0.5, QColor(T['wafer_bg']))
-            wg.setColorAt(1.0, QColor('#cfd9e8'))
-            p.setBrush(QBrush(wg))
-            p.setPen(QPen(QColor(T['wafer_edge']), 1.0))
-            p.drawEllipse(QPointF(cx, cy), radius, radius)
-
-            # flat notch
-            nw = radius * 0.18
-            p.setPen(Qt.NoPen); p.setBrush(QColor(T['bg_app']))
-            p.drawRect(QRectF(cx - nw/2, cy + radius - 4, nw, 5))
-            p.setPen(QPen(QColor(T['wafer_edge']), 1.2))
-            p.drawLine(QPointF(cx - nw/2, cy + radius - 3),
-                       QPointF(cx + nw/2, cy + radius - 3))
-
-            # cells
-            cell = min(draw_w / max(n_cols, 1), draw_h / max(n_rows, 1))
-            ox = (W - cell * n_cols) / 2.0
-            oy = (W - cell * n_rows) / 2.0
-            mg = max(0.5, cell * 0.06)
-            limits_active = (self._lo is not None or self._hi is not None)
-
-            for site in sites:
-                v    = self._values.get(site['name'])
-                px_  = ox + (site['x'] - x0) * cell
-                py_  = oy + (y1 - site['y']) * cell
-                rect = QRectF(px_ + mg, py_ + mg, cell - 2*mg, cell - 2*mg)
-
-                if v is None:
-                    bg = QColor(T['nodata_bg']); bc = QColor(T['nodata_border'])
-                elif not limits_active:
-                    bg = QColor(T['neutral_bg']); bc = QColor(T['neutral_border'])
-                else:
-                    ok = (self._lo is None or v >= self._lo) and \
-                         (self._hi is None or v <= self._hi)
-                    bg = QColor(T['pass_bg'] if ok else T['fail_bg'])
-                    bc = QColor(T['pass_border'] if ok else T['fail_border'])
-
-                p.setBrush(bg); p.setPen(QPen(bc, 0.6))
-                r = max(1.0, cell * 0.12)
-                p.drawRoundedRect(rect, r, r)
-
-        # ── label strip ───────────────────────────────────────────────────────
-        label_y = W + 2
-        label_h = self.height() - label_y
-
-        # wafer id
-        p.setFont(QFont('Segoe UI', 9, QFont.Bold))
-        p.setPen(QColor(T['accent_dark'] if self._selected else T['text_primary']))
-        p.drawText(QRectF(2, label_y, W - 4, 16),
-                   Qt.AlignHCenter | Qt.AlignVCenter,
-                   self.wafer.wafer_id)
-
-        # yield badge
-        if self._yield_pct is not None:
-            yld = self._yield_pct
-            bg_c  = T['pass_bg']  if yld >= 90 else T['fail_bg']  if yld < 70 else '#fff8e1'
-            fg_c  = T['pass_fg']  if yld >= 90 else T['fail_fg']  if yld < 70 else T['warn']
-            bdr_c = T['pass_border'] if yld >= 90 else T['fail_border'] if yld < 70 else '#ffcc02'
-            badge = QRectF(W//2 - 34, label_y + 16, 68, 16)
-            p.setBrush(QColor(bg_c)); p.setPen(QPen(QColor(bdr_c), 0.8))
-            p.drawRoundedRect(badge, 6, 6)
-            p.setFont(QFont('Segoe UI', 8, QFont.Bold))
-            p.setPen(QColor(fg_c))
-            p.drawText(badge, Qt.AlignCenter, f'{yld:.1f}% yield')
-        elif sites:
-            p.setFont(QFont('Segoe UI', 8))
-            p.setPen(QColor(T['text_dim']))
-            p.drawText(QRectF(2, label_y + 16, W - 4, 16),
-                       Qt.AlignHCenter | Qt.AlignVCenter, 'no limits')
-
-        p.end()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  BATCH ANALYSIS TAB
-# ─────────────────────────────────────────────────────────────────────────────
-
-class BatchAnalysisTab(QWidget):
-    """
-    Full batch analysis view.
-    - Top: scrollable grid of wafer thumbnails
-    - Bottom-left: sortable summary table (one row per wafer)
-    - Bottom-right: full-size wafer detail for the selected wafer
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._wafers:       list[WaferData]        = []
-        self._thumbs:       list[BatchWaferThumb]  = []
-        self._selected_idx: int | None             = None
-        self._mkey:         str | None             = None
-        self._sub:          int | None             = None
-        self._lo:           float | None           = None
-        self._hi:           float | None           = None
-
-        self._build_ui()
-
-    # ── build ─────────────────────────────────────────────────────────────────
-
-    def _build_ui(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(10)
-
-        # ── top: thumb grid inside a scroll area ──────────────────────────────
-        thumb_box = QGroupBox('Batch Overview  —  click a wafer to inspect')
-        thumb_box.setFixedHeight(250)
-        tb_lay = QVBoxLayout(thumb_box); tb_lay.setContentsMargins(6, 18, 6, 6)
-
-        from PySide6.QtWidgets import QScrollArea
-        self._scroll = QScrollArea()
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(self._scroll.NoFrame)
-        self._scroll.setStyleSheet('background:transparent;')
-
-        self._thumb_container = QWidget()
-        self._thumb_container.setStyleSheet('background:transparent;')
-        self._thumb_layout = QHBoxLayout(self._thumb_container)
-        self._thumb_layout.setContentsMargins(4, 4, 4, 4)
-        self._thumb_layout.setSpacing(10)
-        self._thumb_layout.addStretch()
-
-        self._scroll.setWidget(self._thumb_container)
-        tb_lay.addWidget(self._scroll)
-        root.addWidget(thumb_box)
-
-        # ── bottom: summary table  |  wafer detail ───────────────────────────
-        bot = QHBoxLayout(); bot.setSpacing(10)
-
-        # summary table
-        tbl_box = QGroupBox('Wafer Summary')
-        tbl_lay = QVBoxLayout(tbl_box); tbl_lay.setContentsMargins(6, 18, 6, 6)
-
-        self._tbl = QTableWidget(0, 8)
-        self._tbl.setHorizontalHeaderLabels(
-            ['Wafer', 'Sites', 'Pass', 'Fail', 'No Data', 'Yield %', 'Mean', 'Std Dev'])
-        hh = self._tbl.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.Stretch)
-        for c in range(1, 8):
-            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
-        self._tbl.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._tbl.setAlternatingRowColors(True)
-        self._tbl.verticalHeader().setVisible(False)
-        self._tbl.setShowGrid(False)
-        self._tbl.setSelectionBehavior(QTableWidget.SelectRows)
-        self._tbl.currentRowChanged.connect(self._on_table_row_changed)
-        tbl_lay.addWidget(self._tbl)
-
-        # batch-level stats beneath the table
-        self._batch_stats_lbl = QLabel('')
-        self._batch_stats_lbl.setWordWrap(True)
-        self._batch_stats_lbl.setStyleSheet(
-            f'color:{T["text_secondary"]};font-size:12px;'
-            f'padding:6px 8px;background:{T["bg_header"]};'
-            f'border-radius:6px;border:1px solid {T["border"]};')
-        tbl_lay.addWidget(self._batch_stats_lbl)
-        bot.addWidget(tbl_box, stretch=5)
-
-        # wafer detail (right side)
-        detail_box = QGroupBox('Wafer Detail')
-        detail_lay = QVBoxLayout(detail_box)
-        detail_lay.setContentsMargins(6, 18, 6, 6)
-        detail_lay.setSpacing(6)
-
-        # wafer id header
-        self._detail_header = QLabel('Select a wafer')
-        self._detail_header.setStyleSheet(
-            f'font-weight:bold;font-size:13px;color:{T["accent_dark"]};'
-            f'padding:5px 8px;background:{T["accent_dim"]};'
-            f'border-radius:8px;border-left:3px solid {T["accent"]};')
-        detail_lay.addWidget(self._detail_header)
-
-        # canvas + die detail in a splitter-like hbox
-        canvas_die = QHBoxLayout(); canvas_die.setSpacing(8)
-
-        self._detail_canvas = WaferCanvas()
-        self._detail_canvas.setMinimumSize(320, 300)
-        self._detail_canvas.siteClicked.connect(self._on_detail_die_clicked)
-
-        canvas_wrap = QWidget()
-        canvas_wrap.setStyleSheet(
-            f'background:{T["bg_panel"]};border:1px solid {T["border"]};'
-            f'border-radius:10px;')
-        cw_lay = QVBoxLayout(canvas_wrap); cw_lay.setContentsMargins(3, 3, 3, 3)
-        cw_lay.addWidget(self._detail_canvas)
-        canvas_die.addWidget(canvas_wrap, stretch=3)
-
-        right_detail = QWidget(); right_detail.setFixedWidth(230)
-        rd_lay = QVBoxLayout(right_detail)
-        rd_lay.setContentsMargins(0, 0, 0, 0); rd_lay.setSpacing(6)
-
-        self._detail_stats = StatsPanel()
-        rd_lay.addWidget(QLabel('Statistics'), 0)
-        rd_lay.addWidget(self._detail_stats, 2)
-
-        self._detail_die = SiteDetailPanel()
-        rd_lay.addWidget(QLabel('Die Detail'), 0)
-        rd_lay.addWidget(self._detail_die, 3)
-        canvas_die.addWidget(right_detail, stretch=0)
-
-        detail_lay.addLayout(canvas_die)
-        bot.addWidget(detail_box, stretch=6)
-
-        root.addLayout(bot, stretch=1)
-
-        self._show_empty_state()
-
-    # ── public API ────────────────────────────────────────────────────────────
-
-    def load_wafers(self, wafers: list[WaferData]):
-        self._wafers = wafers
-        self._selected_idx = None
-        self._rebuild_thumbs()
-        self._rebuild_table()
-        self._show_empty_state()
-
-    def refresh(self, mkey: str | None, sub: int | None,
-                lo: float | None, hi: float | None):
-        """Called whenever measurement / limits change in the main window."""
-        self._mkey = mkey
-        self._sub  = sub
-        self._lo   = lo
-        self._hi   = hi
-        self._refresh_thumbs()
-        self._rebuild_table()
-        if self._selected_idx is not None:
-            self._refresh_detail(self._selected_idx)
-
-    # ── internals ─────────────────────────────────────────────────────────────
-
-    def _rebuild_thumbs(self):
-        # Remove old thumbs
-        while self._thumb_layout.count() > 1:          # keep trailing stretch
-            item = self._thumb_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._thumbs = []
-
-        for i, w in enumerate(self._wafers):
-            thumb = BatchWaferThumb(w)
-            thumb.clicked.connect(lambda ww, idx=i: self._select_wafer(idx))
-            self._thumb_layout.insertWidget(i, thumb)
-            self._thumbs.append(thumb)
-
-        self._refresh_thumbs()
-
-    def _refresh_thumbs(self):
-        if not self._mkey:
-            for th in self._thumbs:
-                th.update_data({}, None, None, None)
-            return
-        for i, (th, w) in enumerate(zip(self._thumbs, self._wafers)):
-            vals = {s['name']: get_site_value(s, self._mkey, self._sub)
-                    for s in w.sites}
-            st   = w.yield_stats(self._mkey, self._sub, self._lo, self._hi)
-            th.update_data(vals, self._lo, self._hi, st['yield_pct'])
-            th.set_selected(i == self._selected_idx)
-
-    def _rebuild_table(self):
-        self._tbl.blockSignals(True)
-        self._tbl.setRowCount(len(self._wafers))
-
-        batch_yields = []
-
-        for row, w in enumerate(self._wafers):
-            if self._mkey:
-                st = w.yield_stats(self._mkey, self._sub, self._lo, self._hi)
-            else:
-                st = dict(passed=0, failed=0, nodata=len(w.sites),
-                          total=0, yield_pct=None, mean=None, stdev=None,
-                          min_v=None, max_v=None)
-
-            yld = st['yield_pct']
-            if yld is not None:
-                batch_yields.append(yld)
-
-            def cell(txt, align=Qt.AlignCenter, bold=False, color=None):
-                it = QTableWidgetItem(txt)
-                it.setTextAlignment(align)
-                f  = QFont('Segoe UI', 12)
-                if bold: f.setBold(True)
-                it.setFont(f)
-                if color: it.setForeground(QColor(color))
-                return it
-
-            # colour the row faintly based on yield
-            row_bg = None
-            if yld is not None:
-                if yld >= 90:   row_bg = QColor(T['pass_bg'])
-                elif yld < 70:  row_bg = QColor(T['fail_bg'])
-                else:           row_bg = QColor('#fffde7')
-
-            cols = [
-                cell(w.wafer_id, Qt.AlignLeft | Qt.AlignVCenter, bold=True,
-                     color=T['accent_dark']),
-                cell(str(len(w.sites))),
-                cell(str(st['passed']),  color=T['pass_fg'] if st['passed'] else None),
-                cell(str(st['failed']),  color=T['fail_fg'] if st['failed'] else None),
-                cell(str(st['nodata']),  color=T['nodata_fg'] if st['nodata'] else None),
-                cell(f"{yld:.1f}%" if yld is not None else '—',
-                     bold=True,
-                     color=(T['pass_fg'] if (yld or 0) >= 90
-                            else T['fail_fg'] if (yld or 0) < 70
-                            else T['warn']) if yld is not None else T['text_dim']),
-                cell(si_fmt(st['mean'])  if st['mean']  is not None else '—'),
-                cell(si_fmt(st['stdev']) if st['stdev'] is not None else '—'),
-            ]
-            for c, it in enumerate(cols):
-                if row_bg:
-                    it.setBackground(row_bg)
-                self._tbl.setItem(row, c, it)
-
-        self._tbl.blockSignals(False)
-
-        # batch-level summary line
-        if batch_yields and self._mkey:
-            avg_y  = statistics.mean(batch_yields)
-            best_i = max(range(len(batch_yields)), key=lambda i: batch_yields[i])
-            worst_i= min(range(len(batch_yields)), key=lambda i: batch_yields[i])
-            self._batch_stats_lbl.setText(
-                f'Batch: {len(self._wafers)} wafers  ·  '
-                f'Avg yield: {avg_y:.1f}%  ·  '
-                f'Best: {self._wafers[best_i].wafer_id} ({batch_yields[best_i]:.1f}%)  ·  '
-                f'Worst: {self._wafers[worst_i].wafer_id} ({batch_yields[worst_i]:.1f}%)'
-            )
-        elif self._wafers:
-            self._batch_stats_lbl.setText(
-                f'{len(self._wafers)} wafers loaded  ·  '
-                f'Set a measurement in the main controls to see yield data.')
-        else:
-            self._batch_stats_lbl.setText('No batch loaded.')
-
-    def _select_wafer(self, idx: int):
-        prev = self._selected_idx
-        self._selected_idx = idx
-
-        # update thumb highlight
-        if prev is not None and prev < len(self._thumbs):
-            self._thumbs[prev].set_selected(False)
-        if idx < len(self._thumbs):
-            self._thumbs[idx].set_selected(True)
-
-        # sync table selection (without re-triggering _on_table_row_changed)
-        self._tbl.blockSignals(True)
-        self._tbl.setCurrentCell(idx, 0)
-        self._tbl.blockSignals(False)
-
-        self._refresh_detail(idx)
-
-    def _on_table_row_changed(self, row: int):
-        if 0 <= row < len(self._wafers):
-            self._select_wafer(row)
-
-    def _refresh_detail(self, idx: int):
-        if idx < 0 or idx >= len(self._wafers):
-            return
-        w = self._wafers[idx]
-
-        # header
-        lot = w.header.get('LOT', '—')
-        self._detail_header.setText(
-            f'  {w.wafer_id}   ·   Lot: {lot}   ·   {len(w.sites)} sites')
-
-        if not self._mkey:
-            self._detail_canvas.load([], {}, None, None)
-            self._detail_stats.update_stats({}, None, None)
-            return
-
-        vals = {s['name']: get_site_value(s, self._mkey, self._sub)
-                for s in w.sites}
-        self._detail_canvas.load(w.sites, vals, self._lo, self._hi,
-                                 mkey=self._mkey)
-        self._detail_stats.update_stats(vals, self._lo, self._hi)
-
-    def _on_detail_die_clicked(self, site: dict):
-        self._detail_die.show_site(site)
-
-    def _show_empty_state(self):
-        self._detail_header.setText('Select a wafer')
-        self._detail_canvas.load([], {}, None, None)
-        self._detail_stats.update_stats({}, None, None)
-        self._batch_stats_lbl.setText('No batch loaded — use "Open Batch…" in the toolbar.')
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 #  MAIN WINDOW
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1513,7 +1014,6 @@ class MainWindow(QMainWindow):
         self._filepath:     str | None = None
         self._all_subsites: list[int]  = []
         self._current_sub:  int | None = None
-        self._batch_wafers: list[WaferData] = []
 
         self._build_ui()
         self._update_ui_state()
@@ -1530,11 +1030,6 @@ class MainWindow(QMainWindow):
         open_act = QAction('  Open KDF…', self)
         open_act.triggered.connect(self.open_file)
         tb.addAction(open_act)
-        tb.addSeparator()
-
-        batch_act = QAction('  Open Batch…', self)
-        batch_act.triggered.connect(self.open_batch)
-        tb.addAction(batch_act)
         tb.addSeparator()
 
         exp_act = QAction('  Export Map…', self)
@@ -1574,15 +1069,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.lbl_file)
 
         cw = QWidget(); self.setCentralWidget(cw)
-        main_v = QVBoxLayout(cw); main_v.setContentsMargins(0, 0, 0, 0); main_v.setSpacing(0)
-
-        # top-level tab widget: Single Wafer | Batch
-        self._top_tabs = QTabWidget()
-        main_v.addWidget(self._top_tabs)
-
-        # ── Single Wafer tab ──────────────────────────────────────────────────
-        single_widget = QWidget()
-        mh = QHBoxLayout(single_widget); mh.setSpacing(10); mh.setContentsMargins(10, 10, 10, 10)
+        mh = QHBoxLayout(cw); mh.setSpacing(10); mh.setContentsMargins(10, 10, 10, 10)
 
         # ── left panel ────────────────────────────────────────────────────────
         left = QWidget(); left.setFixedWidth(320)
@@ -1683,12 +1170,6 @@ class MainWindow(QMainWindow):
 
         mh.addWidget(right)
 
-        self._top_tabs.addTab(single_widget, '  Single Wafer  ')
-
-        # ── Batch Analysis tab ────────────────────────────────────────────────
-        self._batch_tab = BatchAnalysisTab()
-        self._top_tabs.addTab(self._batch_tab, '  Batch Analysis  ')
-
         self.status = QStatusBar(); self.setStatusBar(self.status)
         self.status.showMessage('  Ready  ·  open a KDF file to begin')
 
@@ -1700,71 +1181,6 @@ class MainWindow(QMainWindow):
             'KDF Files (*.kdf *.KDF);;All Files (*)')
         if path:
             self._load_kdf(path)
-
-    def open_batch(self):
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, 'Open Batch — select KDF files', '',
-            'KDF Files (*.kdf *.KDF);;All Files (*)')
-        if paths:
-            self._load_batch(sorted(paths))
-
-    def _load_batch(self, paths: list[str]):
-        wafers = []
-        all_mkeys: set[str] = set()
-        errors = []
-
-        for path in paths:
-            try:
-                header, sites, mkeys, tests = parse_kdf(path)
-                wid = os.path.splitext(os.path.basename(path))[0]
-                subs = all_subsites(sites)
-                wd = WaferData(
-                    filepath=path,
-                    wafer_id=wid,
-                    header=header,
-                    sites=sites,
-                    mkeys=mkeys,
-                    tests=tests,
-                    subsites=subs,
-                )
-                wafers.append(wd)
-                all_mkeys.update(mkeys)
-            except Exception as e:
-                errors.append(f'{os.path.basename(path)}: {e}')
-
-        if errors:
-            QMessageBox.warning(self, 'Batch Load Warnings',
-                                'Some files could not be loaded:\n\n' +
-                                '\n'.join(errors))
-        if not wafers:
-            return
-
-        self._batch_wafers = wafers
-
-        # Merge mkeys into the measurement combo (union of all wafers)
-        merged = sorted(all_mkeys | set(self._mkeys))
-        self._mkeys = merged
-        cur = self._current_mkey
-        self.mkey_combo.blockSignals(True)
-        self.mkey_combo.clear()
-        self.mkey_combo.addItems(merged)
-        if cur and cur in merged:
-            self.mkey_combo.setCurrentText(cur)
-        elif merged:
-            self._current_mkey = merged[0]
-            self.mkey_combo.setCurrentIndex(0)
-        self.mkey_combo.blockSignals(False)
-
-        self._batch_tab.load_wafers(wafers)
-        self._refresh_batch()
-
-        # Switch to batch tab automatically
-        self._top_tabs.setCurrentIndex(1)
-
-        self.status.showMessage(
-            f'  Batch: {len(wafers)} wafers loaded  ·  '
-            f'{sum(len(w.sites) for w in wafers)} total sites'
-        )
 
     def _load_kdf(self, path: str):
         try:
@@ -1912,7 +1328,6 @@ class MainWindow(QMainWindow):
             self._limits[self._current_mkey] = (lo, hi)
         self._rebuild_design_combo()
         self._refresh_canvas()
-        self._refresh_batch()
 
     def _clear_limits(self):
         self.low_edit.clear(); self.high_edit.clear()
@@ -1920,7 +1335,6 @@ class MainWindow(QMainWindow):
             self._limits[self._current_mkey] = (None, None)
         self._rebuild_design_combo()
         self._refresh_canvas()
-        self._refresh_batch()
 
     def _parse_limit(self, text: str, label: str = '') -> float | None:
         text = text.strip()
@@ -1953,16 +1367,6 @@ class MainWindow(QMainWindow):
             f'  {mkey}  ·  {sub_label}'
             f'  ·  Low = {lo_s}  High = {hi_s}'
             f'  ·  {len(self._sites)} sites')
-        self._refresh_batch()
-
-    def _refresh_batch(self):
-        """Push current mkey / sub / limits to the batch tab."""
-        if not self._batch_wafers:
-            return
-        mkey = self._current_mkey
-        sub  = self._current_sub
-        lo, hi = self._limits.get(mkey, (None, None)) if mkey else (None, None)
-        self._batch_tab.refresh(mkey, sub, lo, hi)
 
     def _on_die_clicked(self, site: dict):
         self.detail_panel.show_site(site)
