@@ -1073,11 +1073,6 @@ class MainWindow(QMainWindow):
         tb.addAction(open_act)
         tb.addSeparator()
 
-        open_batch_act = QAction('  Open Batch Folder…', self)
-        open_batch_act.triggered.connect(self.open_batch_folder)
-        tb.addAction(open_batch_act)
-        tb.addSeparator()
-
         exp_act = QAction('  Export Map…', self)
         exp_act.triggered.connect(self.export_map)
         tb.addAction(exp_act)
@@ -1263,16 +1258,21 @@ class MainWindow(QMainWindow):
         btv = QVBoxLayout(self.batch_tab); btv.setContentsMargins(8, 8, 8, 8); btv.setSpacing(8)
 
         bh = QHBoxLayout()
-        self.batch_open_btn = QPushButton('Open Batch Folder…')
-        self.batch_open_btn.clicked.connect(self.open_batch_folder)
-        bh.addWidget(self.batch_open_btn)
         self.batch_mkey_combo = ArrowComboBox()
         self.batch_mkey_combo.setMinimumHeight(34)
         self.batch_mkey_combo.currentTextChanged.connect(self._update_batch_table)
         bh.addWidget(self.batch_mkey_combo, stretch=1)
+        self.batch_sort_combo = ArrowComboBox()
+        self.batch_sort_combo.setMinimumHeight(34)
+        self.batch_sort_combo.addItems(['Yield (high to low)', 'Yield (low to high)', 'Wafer name'])
+        self.batch_sort_combo.currentTextChanged.connect(self._update_batch_table)
+        bh.addWidget(self.batch_sort_combo)
         self.batch_compare_btn = QPushButton('Compare Selected')
         self.batch_compare_btn.clicked.connect(self._compare_selected_wafers)
         bh.addWidget(self.batch_compare_btn)
+        self.batch_load_btn = QPushButton('Load Batch Folder…')
+        self.batch_load_btn.clicked.connect(self.open_batch_folder)
+        bh.addWidget(self.batch_load_btn)
         btv.addLayout(bh)
 
         self.batch_progress = QProgressBar()
@@ -1308,6 +1308,30 @@ class MainWindow(QMainWindow):
         self.batch_compare_summary.setWordWrap(True)
         self.batch_compare_summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
         btv.addWidget(self.batch_compare_summary)
+
+        compare_maps_row = QHBoxLayout()
+        self.batch_compare_cards = []
+        for i in range(3):
+            card = QGroupBox(f'Wafer {i + 1}')
+            cv = QVBoxLayout(card); cv.setContentsMargins(8, 8, 8, 8); cv.setSpacing(6)
+            title = QLabel('Not selected')
+            title.setStyleSheet(f'font-weight:700;color:{T["accent_dark"]};')
+            meta = QLabel('Select rows in the table to compare.')
+            meta.setWordWrap(True)
+            meta.setStyleSheet(f'font-size:11px;color:{T["text_secondary"]};')
+            canvas = WaferCanvas()
+            canvas.setMinimumSize(220, 220)
+            cv.addWidget(title)
+            cv.addWidget(meta)
+            cv.addWidget(canvas, stretch=1)
+            compare_maps_row.addWidget(card, stretch=1)
+            self.batch_compare_cards.append({
+                'card': card,
+                'title': title,
+                'meta': meta,
+                'canvas': canvas,
+            })
+        btv.addLayout(compare_maps_row)
 
         self.main_tabs.addTab(self.batch_tab, 'Batch Analysis')
 
@@ -1660,6 +1684,7 @@ class MainWindow(QMainWindow):
         if not self._batch_records:
             self.batch_table.setRowCount(0)
             self.batch_compare_summary.setText('Select two or more wafers to compare.')
+            self._clear_compare_cards()
             return
 
         mkey = self.batch_mkey_combo.currentText().strip()
@@ -1669,6 +1694,7 @@ class MainWindow(QMainWindow):
                 f'Loaded {len(self._batch_records)} wafers. No measurement selected.'
             )
             self.batch_compare_summary.setText('Select two or more wafers to compare.')
+            self._clear_compare_cards()
             return
 
         lo, hi, prod_lo, prod_hi = self._limits.get(mkey, (None, None, None, None))
@@ -1729,7 +1755,13 @@ class MainWindow(QMainWindow):
                 'yield_num': (-1.0 if yld is None else yld),
             })
 
-        rows.sort(key=lambda r: r['yield_num'], reverse=True)
+        sort_mode = self.batch_sort_combo.currentText() if hasattr(self, 'batch_sort_combo') else 'Yield (high to low)'
+        if sort_mode == 'Yield (low to high)':
+            rows.sort(key=lambda r: (9999.0 if r['yield_num'] < 0 else r['yield_num']))
+        elif sort_mode == 'Wafer name':
+            rows.sort(key=lambda r: r['rec']['name'].lower())
+        else:
+            rows.sort(key=lambda r: r['yield_num'], reverse=True)
 
         self.batch_table.setRowCount(len(rows))
         for i, row in enumerate(rows):
@@ -1762,6 +1794,7 @@ class MainWindow(QMainWindow):
                 self.batch_table.setItem(i, col, it)
             # store path in first column item for easy retrieval on double click
             self.batch_table.item(i, 0).setData(Qt.UserRole, rec['path'])
+            self.batch_table.item(i, 0).setData(int(Qt.UserRole) + 1, row)
 
         overall = (total_pass / total_valid * 100.0) if total_valid else 0.0
         prod_txt = 'on' if use_prod else 'off'
@@ -1779,6 +1812,7 @@ class MainWindow(QMainWindow):
         selected_rows = sorted({idx.row() for idx in self.batch_table.selectionModel().selectedRows()})
         if len(selected_rows) < 2:
             self.batch_compare_summary.setText('Select two or more wafers to compare.')
+            self._clear_compare_cards()
             return
 
         comp = []
@@ -1796,6 +1830,7 @@ class MainWindow(QMainWindow):
                     yld_val = float(yld_it.text().rstrip('%'))
                 except ValueError:
                     yld_val = -1.0
+            row_data = name_it.data(int(Qt.UserRole) + 1) if name_it else None
             comp.append({
                 'name': name_it.text(),
                 'yield_num': yld_val,
@@ -1803,10 +1838,12 @@ class MainWindow(QMainWindow):
                 'pass_txt': (pass_it.text() if pass_it else '0'),
                 'fail_txt': (fail_it.text() if fail_it else '0'),
                 'mean_txt': (mean_it.text() if mean_it else 'N/A'),
+                'row_data': row_data,
             })
 
         if len(comp) < 2:
             self.batch_compare_summary.setText('Select two or more wafers to compare.')
+            self._clear_compare_cards()
             return
 
         comp_sorted = sorted(comp, key=lambda x: x['yield_num'], reverse=True)
@@ -1820,6 +1857,56 @@ class MainWindow(QMainWindow):
             f'Worst yield: {worst["name"]} ({worst["yield_txt"]})  ·  '
             f'Delta: {delta_txt}'
         )
+        self._render_compare_cards(comp[:3])
+
+    def _clear_compare_cards(self):
+        if not hasattr(self, 'batch_compare_cards'):
+            return
+        for idx, card in enumerate(self.batch_compare_cards):
+            card['title'].setText(f'Wafer {idx + 1}  ·  Not selected')
+            card['meta'].setText('Select rows in the table to compare.')
+            card['canvas'].load([], {}, None, None, mkey='')
+
+    def _render_compare_cards(self, comp_rows: list[dict]):
+        if not hasattr(self, 'batch_compare_cards'):
+            return
+        mkey = self.batch_mkey_combo.currentText().strip()
+        lo, hi, prod_lo, prod_hi = self._limits.get(mkey, (None, None, None, None))
+        use_prod = self._use_prod_limits and (prod_lo is not None or prod_hi is not None)
+
+        for idx, card in enumerate(self.batch_compare_cards):
+            if idx >= len(comp_rows):
+                card['title'].setText(f'Wafer {idx + 1}  ·  Not selected')
+                card['meta'].setText('Select rows in the table to compare.')
+                card['canvas'].load([], {}, None, None, mkey='')
+                continue
+
+            c = comp_rows[idx]
+            row_data = c.get('row_data') or {}
+            rec = row_data.get('rec')
+            if not rec:
+                card['title'].setText(c.get('name', f'Wafer {idx + 1}'))
+                card['meta'].setText('No data available.')
+                card['canvas'].load([], {}, None, None, mkey='')
+                continue
+
+            design = row_data.get('design_used')
+            try:
+                design_num = int(design) if design not in (None, '—') else None
+            except ValueError:
+                design_num = None
+            values = {s['name']: get_site_value(s, mkey, design_num) for s in rec.get('sites', [])}
+            card['canvas'].load(
+                rec.get('sites', []), values, lo, hi, mkey=mkey,
+                prod_lo=prod_lo, prod_hi=prod_hi, show_prod=use_prod
+            )
+            card['title'].setText(f'{rec.get("name", "Wafer")}  ·  Yield {c.get("yield_txt", "N/A")}')
+            lim_text = f'Spec: {("—" if lo is None else lo)} to {("—" if hi is None else hi)}'
+            if use_prod:
+                lim_text += f'  ·  Prod: {("—" if prod_lo is None else prod_lo)} to {("—" if prod_hi is None else prod_hi)}'
+            card['meta'].setText(
+                f'Mean: {c.get("mean_txt", "N/A")}  ·  Pass/Fail: {c.get("pass_txt", "0")}/{c.get("fail_txt", "0")}\n{lim_text}'
+            )
 
     def _open_batch_selected_wafer(self, item: QTableWidgetItem):
         if item is None:
@@ -1909,6 +1996,8 @@ class MainWindow(QMainWindow):
         self.prod_low_edit.setEnabled(has and self._use_prod_limits)
         self.prod_high_edit.setEnabled(has and self._use_prod_limits)
         self.batch_mkey_combo.setEnabled(has_batch)
+        self.batch_sort_combo.setEnabled(has_batch)
+        self.batch_compare_btn.setEnabled(has_batch)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ENTRY POINT
