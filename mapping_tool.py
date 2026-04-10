@@ -1115,7 +1115,12 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.lbl_file)
 
         cw = QWidget(); self.setCentralWidget(cw)
-        mh = QHBoxLayout(cw); mh.setSpacing(10); mh.setContentsMargins(10, 10, 10, 10)
+        root = QVBoxLayout(cw); root.setSpacing(8); root.setContentsMargins(10, 10, 10, 10)
+        self.main_tabs = QTabWidget()
+        root.addWidget(self.main_tabs)
+
+        wafer_page = QWidget()
+        mh = QHBoxLayout(wafer_page); mh.setSpacing(10); mh.setContentsMargins(0, 0, 0, 0)
 
         # ── left panel ────────────────────────────────────────────────────────
         left = QWidget(); left.setFixedWidth(320)
@@ -1251,6 +1256,9 @@ class MainWindow(QMainWindow):
 
         self.stats_panel = StatsPanel()
         tabs.addTab(self.stats_panel, 'Statistics')
+        mh.addWidget(right)
+        self.main_tabs.addTab(wafer_page, 'Wafer View')
+
         self.batch_tab = QWidget()
         btv = QVBoxLayout(self.batch_tab); btv.setContentsMargins(8, 8, 8, 8); btv.setSpacing(8)
 
@@ -1262,6 +1270,9 @@ class MainWindow(QMainWindow):
         self.batch_mkey_combo.setMinimumHeight(34)
         self.batch_mkey_combo.currentTextChanged.connect(self._update_batch_table)
         bh.addWidget(self.batch_mkey_combo, stretch=1)
+        self.batch_compare_btn = QPushButton('Compare Selected')
+        self.batch_compare_btn.clicked.connect(self._compare_selected_wafers)
+        bh.addWidget(self.batch_compare_btn)
         btv.addLayout(bh)
 
         self.batch_progress = QProgressBar()
@@ -1286,15 +1297,19 @@ class MainWindow(QMainWindow):
             bth.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         self.batch_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.batch_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.batch_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.batch_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.batch_table.verticalHeader().setVisible(False)
         self.batch_table.setShowGrid(False)
         self.batch_table.itemDoubleClicked.connect(self._open_batch_selected_wafer)
+        self.batch_table.itemSelectionChanged.connect(self._compare_selected_wafers)
         btv.addWidget(self.batch_table)
 
-        tabs.addTab(self.batch_tab, 'Batch Analysis')
+        self.batch_compare_summary = QLabel('Select two or more wafers to compare.')
+        self.batch_compare_summary.setWordWrap(True)
+        self.batch_compare_summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
+        btv.addWidget(self.batch_compare_summary)
 
-        mh.addWidget(right)
+        self.main_tabs.addTab(self.batch_tab, 'Batch Analysis')
 
         self.status = QStatusBar(); self.setStatusBar(self.status)
         self.status.showMessage('  Ready  ·  open a KDF file to begin')
@@ -1314,6 +1329,16 @@ class MainWindow(QMainWindow):
             return
         self._load_batch_folder(folder)
 
+    def _set_active_batch_tab(self):
+        if hasattr(self, 'main_tabs'):
+            idx = self.main_tabs.indexOf(self.batch_tab)
+            if idx >= 0:
+                self.main_tabs.setCurrentIndex(idx)
+
+    def _set_active_wafer_tab(self):
+        if hasattr(self, 'main_tabs'):
+            self.main_tabs.setCurrentIndex(0)
+
     def _load_batch_folder(self, folder: str):
         try:
             names = sorted(os.listdir(folder))
@@ -1328,6 +1353,7 @@ class MainWindow(QMainWindow):
         if not kdf_paths:
             QMessageBox.information(self, 'No KDF files', 'No .kdf files were found in this folder.')
             return
+        self._set_active_batch_tab()
 
         self._batch_records = []
         self._batch_dir = folder
@@ -1428,6 +1454,7 @@ class MainWindow(QMainWindow):
             f'{len(tests)} tests  ·  '
             f'{len(subs)} design(s)  ·  {os.path.basename(path)}')
         self._update_batch_table()
+        self._set_active_wafer_tab()
 
     # ── design / measurement / limits ─────────────────────────────────────────
 
@@ -1632,6 +1659,7 @@ class MainWindow(QMainWindow):
             return
         if not self._batch_records:
             self.batch_table.setRowCount(0)
+            self.batch_compare_summary.setText('Select two or more wafers to compare.')
             return
 
         mkey = self.batch_mkey_combo.currentText().strip()
@@ -1640,6 +1668,7 @@ class MainWindow(QMainWindow):
             self.batch_summary.setText(
                 f'Loaded {len(self._batch_records)} wafers. No measurement selected.'
             )
+            self.batch_compare_summary.setText('Select two or more wafers to compare.')
             return
 
         lo, hi, prod_lo, prod_hi = self._limits.get(mkey, (None, None, None, None))
@@ -1741,6 +1770,55 @@ class MainWindow(QMainWindow):
             f'Wafers: {len(rows)}  ·  Measurement: {mkey}  ·  Prod limits: {prod_txt}\n'
             f'Overall pass: {total_pass}/{total_valid}  ·  Overall yield: {overall:.1f}%\n'
             f'Tip: double-click a wafer row to open it in the wafer map view.'
+        )
+        self._compare_selected_wafers()
+
+    def _compare_selected_wafers(self):
+        if not hasattr(self, 'batch_table'):
+            return
+        selected_rows = sorted({idx.row() for idx in self.batch_table.selectionModel().selectedRows()})
+        if len(selected_rows) < 2:
+            self.batch_compare_summary.setText('Select two or more wafers to compare.')
+            return
+
+        comp = []
+        for row in selected_rows:
+            name_it = self.batch_table.item(row, 0)
+            yld_it = self.batch_table.item(row, 9)
+            pass_it = self.batch_table.item(row, 7)
+            fail_it = self.batch_table.item(row, 8)
+            mean_it = self.batch_table.item(row, 5)
+            if not name_it:
+                continue
+            yld_val = -1.0
+            if yld_it and yld_it.text().endswith('%'):
+                try:
+                    yld_val = float(yld_it.text().rstrip('%'))
+                except ValueError:
+                    yld_val = -1.0
+            comp.append({
+                'name': name_it.text(),
+                'yield_num': yld_val,
+                'yield_txt': (yld_it.text() if yld_it else 'N/A'),
+                'pass_txt': (pass_it.text() if pass_it else '0'),
+                'fail_txt': (fail_it.text() if fail_it else '0'),
+                'mean_txt': (mean_it.text() if mean_it else 'N/A'),
+            })
+
+        if len(comp) < 2:
+            self.batch_compare_summary.setText('Select two or more wafers to compare.')
+            return
+
+        comp_sorted = sorted(comp, key=lambda x: x['yield_num'], reverse=True)
+        best = comp_sorted[0]
+        worst = comp_sorted[-1]
+        delta = (best['yield_num'] - worst['yield_num']) if best['yield_num'] >= 0 and worst['yield_num'] >= 0 else None
+        delta_txt = f'{delta:.1f}%' if delta is not None else 'N/A'
+        self.batch_compare_summary.setText(
+            f'Comparing {len(comp)} wafers  ·  '
+            f'Best yield: {best["name"]} ({best["yield_txt"]})  ·  '
+            f'Worst yield: {worst["name"]} ({worst["yield_txt"]})  ·  '
+            f'Delta: {delta_txt}'
         )
 
     def _open_batch_selected_wafer(self, item: QTableWidgetItem):
