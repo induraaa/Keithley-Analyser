@@ -189,6 +189,28 @@ QLineEdit,QSpinBox{
     min-height:28px;
 }
 QLineEdit:focus,QSpinBox:focus{border:1px solid """ + T['accent'] + """;}
+QCheckBox{
+    color:""" + T['text_primary'] + """;
+    font-size:12px;
+    font-weight:600;
+    spacing:8px;
+    padding:2px 0;
+}
+QCheckBox::indicator{
+    width:16px;
+    height:16px;
+    border:1px solid """ + T['border_hi'] + """;
+    border-radius:4px;
+    background:""" + T['bg_panel'] + """;
+}
+QCheckBox::indicator:checked{
+    background:""" + T['accent'] + """;
+    border:1px solid """ + T['accent_dark'] + """;
+}
+QCheckBox::indicator:disabled{
+    background:""" + T['bg_header'] + """;
+    border:1px solid """ + T['border'] + """;
+}
 QSpinBox::up-button,QSpinBox::down-button{
     width:20px;
     background:""" + T['bg_header'] + """;
@@ -1177,14 +1199,26 @@ class MainWindow(QMainWindow):
             en = QLineEdit(); en.setPlaceholderText('no limit')
             setattr(self, attr, en); row.addWidget(en); lbv.addLayout(row)
 
-        self.prod_toggle = QCheckBox('Use production limits (finer window)')
+        self.prod_toggle = QCheckBox('Use production limits (tighter production window)')
         self.prod_toggle.toggled.connect(self._on_prod_toggle)
         lbv.addWidget(self.prod_toggle)
 
         self.prod_limits_wrap = QWidget()
+        self.prod_limits_wrap.setObjectName('prodLimitsWrap')
+        self.prod_limits_wrap.setStyleSheet(
+            f"QWidget#prodLimitsWrap{{"
+            f"background:{T['bg_header']};"
+            f"border:1px solid {T['border']};"
+            f"border-radius:8px;"
+            f"}}"
+        )
         plv = QVBoxLayout(self.prod_limits_wrap)
-        plv.setContentsMargins(0, 0, 0, 0)
+        plv.setContentsMargins(8, 8, 8, 8)
         plv.setSpacing(6)
+        prod_hint = QLabel('Optional: tighter limits used for yellow screening')
+        prod_hint.setWordWrap(True)
+        prod_hint.setStyleSheet(f'color:{T["text_secondary"]};font-size:11px;')
+        plv.addWidget(prod_hint)
         for lbl_txt, attr in [('Prod Low', 'prod_low_edit'), ('Prod High', 'prod_high_edit')]:
             row = QHBoxLayout()
             rl = QLabel(lbl_txt)
@@ -1420,6 +1454,7 @@ class MainWindow(QMainWindow):
     def _on_prod_toggle(self, checked: bool):
         self._use_prod_limits = bool(checked)
         self.prod_limits_wrap.setVisible(self._use_prod_limits)
+        self._update_ui_state()
         self._rebuild_design_combo()
         self._refresh_canvas()
 
