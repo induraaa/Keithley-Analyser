@@ -1885,7 +1885,10 @@ class MainWindow(QMainWindow):
             mode_int = int(mode)
         except (TypeError, ValueError):
             return None
-        return mode_int
+        if mode_int in subs:
+            return mode_int
+        # If a specific design is not present on this wafer, fall back to aggregate.
+        return None
 
     def _batch_values_for_record(self, rec: dict, mkey: str):
         design = self._batch_design_for_record(rec)
@@ -2051,7 +2054,6 @@ class MainWindow(QMainWindow):
                 self.batch_table.setItem(i, col, it)
             # store path in first column item for easy retrieval on double click
             self.batch_table.item(i, 0).setData(Qt.UserRole, rec['path'])
-            self.batch_table.item(i, 0).setData(int(Qt.UserRole) + 1, row)
 
         overall = (total_pass / total_valid * 100.0) if total_valid else 0.0
         prod_txt = 'on' if use_prod else 'off'
@@ -2188,7 +2190,7 @@ class MainWindow(QMainWindow):
                     yld_val = float(yld_it.text().rstrip('%'))
                 except ValueError:
                     yld_val = -1.0
-            row_data = name_it.data(int(Qt.UserRole) + 1) if name_it else None
+            row_data = self._batch_rows[row] if (0 <= row < len(self._batch_rows)) else None
             comp.append({
                 'name': name_it.text(),
                 'yield_num': yld_val,
@@ -2480,6 +2482,7 @@ class MainWindow(QMainWindow):
         self.batch_compare_btn.setEnabled(has_batch)
         self.batch_export_csv_btn.setEnabled(has_batch)
         self.batch_export_pdf_btn.setEnabled(has_batch)
+        self.batch_load_btn.setEnabled(True)
         self.batch_golden_combo.setEnabled(has_batch)
         self.batch_low_edit.setEnabled(has_batch)
         self.batch_high_edit.setEnabled(has_batch)
