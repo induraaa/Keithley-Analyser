@@ -1340,7 +1340,7 @@ class MainWindow(QMainWindow):
         self.batch_table.setShowGrid(False)
         self.batch_table.setMinimumHeight(180)
         self.batch_table.setMaximumHeight(260)
-        self.batch_table.setSortingEnabled(True)
+        self.batch_table.setSortingEnabled(False)
         self.batch_table.itemDoubleClicked.connect(self._open_batch_selected_wafer)
         self.batch_table.itemSelectionChanged.connect(self._compare_selected_wafers)
         bav.addWidget(self.batch_table)
@@ -1357,7 +1357,7 @@ class MainWindow(QMainWindow):
         self.batch_radial_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.batch_radial_table.verticalHeader().setVisible(False)
         self.batch_radial_table.setMaximumHeight(220)
-        self.batch_radial_table.setSortingEnabled(True)
+        self.batch_radial_table.setSortingEnabled(False)
         rvb.addWidget(self.batch_radial_table)
         bav.addWidget(radial_box)
 
@@ -1379,7 +1379,7 @@ class MainWindow(QMainWindow):
         self.batch_golden_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.batch_golden_table.verticalHeader().setVisible(False)
         self.batch_golden_table.setMaximumHeight(220)
-        self.batch_golden_table.setSortingEnabled(True)
+        self.batch_golden_table.setSortingEnabled(False)
         gv.addWidget(self.batch_golden_table)
         bav.addWidget(golden_box)
 
