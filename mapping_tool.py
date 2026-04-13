@@ -1292,6 +1292,11 @@ class MainWindow(QMainWindow):
         self.batch_mkey_combo.setMinimumHeight(34)
         self.batch_mkey_combo.currentTextChanged.connect(self._update_batch_table)
         ch.addWidget(self.batch_mkey_combo, stretch=1)
+        self.batch_design_mode_combo = ArrowComboBox()
+        self.batch_design_mode_combo.setMinimumHeight(34)
+        self.batch_design_mode_combo.addItem('All designs (aggregate)', None)
+        self.batch_design_mode_combo.currentIndexChanged.connect(self._update_batch_table)
+        ch.addWidget(self.batch_design_mode_combo)
         self.batch_sort_combo = ArrowComboBox()
         self.batch_sort_combo.setMinimumHeight(34)
         self.batch_sort_combo.addItems(['Yield (high to low)', 'Yield (low to high)', 'Wafer name'])
@@ -1300,9 +1305,12 @@ class MainWindow(QMainWindow):
         self.batch_compare_btn = QPushButton('Compare Selected')
         self.batch_compare_btn.clicked.connect(self._compare_selected_wafers)
         ch.addWidget(self.batch_compare_btn)
-        self.batch_export_btn = QPushButton('Export Batch Report…')
-        self.batch_export_btn.clicked.connect(self._export_batch_report)
-        ch.addWidget(self.batch_export_btn)
+        self.batch_export_csv_btn = QPushButton('Export CSV…')
+        self.batch_export_csv_btn.clicked.connect(self._export_batch_csv)
+        ch.addWidget(self.batch_export_csv_btn)
+        self.batch_export_pdf_btn = QPushButton('Export PDF Summary…')
+        self.batch_export_pdf_btn.clicked.connect(self._export_batch_pdf)
+        ch.addWidget(self.batch_export_pdf_btn)
         bav.addWidget(controls)
 
         self.batch_progress = QProgressBar()
@@ -1316,14 +1324,14 @@ class MainWindow(QMainWindow):
         self.batch_summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
         bav.addWidget(self.batch_summary)
 
-        self.batch_table = QTableWidget(0, 11)
+        self.batch_table = QTableWidget(0, 12)
         self.batch_table.setHorizontalHeaderLabels([
-            'Wafer File', 'Lot', 'Designs', 'Design Used', 'Sites', 'Mean', 'Std Dev',
+            'Wafer File', 'Lot', 'Designs', 'Design Used', 'Sites', 'Mean', 'Median', 'Std Dev',
             'Pass', 'Fail', 'Yield', 'Status'
         ])
         bth = self.batch_table.horizontalHeader()
         bth.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in (1, 2, 3, 4, 7, 8, 9, 10):
+        for col in (1, 2, 3, 4, 8, 9, 10, 11):
             bth.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         self.batch_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.batch_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1332,24 +1340,10 @@ class MainWindow(QMainWindow):
         self.batch_table.setShowGrid(False)
         self.batch_table.setMinimumHeight(180)
         self.batch_table.setMaximumHeight(260)
+        self.batch_table.setSortingEnabled(True)
         self.batch_table.itemDoubleClicked.connect(self._open_batch_selected_wafer)
         self.batch_table.itemSelectionChanged.connect(self._compare_selected_wafers)
         bav.addWidget(self.batch_table)
-
-        trend_box = QGroupBox('Trend By Wafer Order')
-        tv = QVBoxLayout(trend_box); tv.setContentsMargins(8, 8, 8, 8)
-        self.batch_trend_summary = QLabel('Shows drift in yield/mean/std by wafer sequence.')
-        self.batch_trend_summary.setWordWrap(True)
-        self.batch_trend_summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
-        tv.addWidget(self.batch_trend_summary)
-        self.batch_trend_table = QTableWidget(0, 5)
-        self.batch_trend_table.setHorizontalHeaderLabels(['Order', 'Wafer', 'Yield', 'Mean', 'Std Dev'])
-        self.batch_trend_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.batch_trend_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.batch_trend_table.verticalHeader().setVisible(False)
-        self.batch_trend_table.setMaximumHeight(220)
-        tv.addWidget(self.batch_trend_table)
-        bav.addWidget(trend_box)
 
         radial_box = QGroupBox('Within-Wafer Radial Analysis')
         rvb = QVBoxLayout(radial_box); rvb.setContentsMargins(8, 8, 8, 8)
@@ -1363,6 +1357,7 @@ class MainWindow(QMainWindow):
         self.batch_radial_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.batch_radial_table.verticalHeader().setVisible(False)
         self.batch_radial_table.setMaximumHeight(220)
+        self.batch_radial_table.setSortingEnabled(True)
         rvb.addWidget(self.batch_radial_table)
         bav.addWidget(radial_box)
 
@@ -1384,6 +1379,7 @@ class MainWindow(QMainWindow):
         self.batch_golden_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.batch_golden_table.verticalHeader().setVisible(False)
         self.batch_golden_table.setMaximumHeight(220)
+        self.batch_golden_table.setSortingEnabled(True)
         gv.addWidget(self.batch_golden_table)
         bav.addWidget(golden_box)
 
@@ -1546,10 +1542,17 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
 
         mkeys = sorted({mk for rec in self._batch_records for mk in rec['mkeys']})
+        batch_subs = sorted({sn for rec in self._batch_records for sn in rec.get('subs', [])})
         self.batch_mkey_combo.blockSignals(True)
         self.batch_mkey_combo.clear()
         self.batch_mkey_combo.addItems(mkeys)
         self.batch_mkey_combo.blockSignals(False)
+        self.batch_design_mode_combo.blockSignals(True)
+        self.batch_design_mode_combo.clear()
+        self.batch_design_mode_combo.addItem('All designs (aggregate)', None)
+        for sn in batch_subs:
+            self.batch_design_mode_combo.addItem(f'Design {sn}', sn)
+        self.batch_design_mode_combo.blockSignals(False)
         if mkeys:
             if self._current_mkey and self._current_mkey in mkeys:
                 self.batch_mkey_combo.setCurrentText(self._current_mkey)
@@ -1875,11 +1878,14 @@ class MainWindow(QMainWindow):
 
     def _batch_design_for_record(self, rec: dict) -> int | None:
         subs = rec.get('subs') or []
-        if not subs:
+        mode = self.batch_design_mode_combo.currentData() if hasattr(self, 'batch_design_mode_combo') else None
+        if mode is None:
+            return None  # aggregate across all designs
+        try:
+            mode_int = int(mode)
+        except (TypeError, ValueError):
             return None
-        if self._current_sub is not None and self._current_sub in subs:
-            return self._current_sub
-        return subs[0]
+        return mode_int
 
     def _batch_values_for_record(self, rec: dict, mkey: str):
         design = self._batch_design_for_record(rec)
@@ -1887,17 +1893,6 @@ class MainWindow(QMainWindow):
         for s in rec.get('sites', []):
             values[s['name']] = get_site_value(s, mkey, design)
         return design, values
-
-    def _linear_slope(self, ys: list[float]) -> float:
-        n = len(ys)
-        if n < 2:
-            return 0.0
-        xs = list(range(n))
-        mx = statistics.mean(xs)
-        my = statistics.mean(ys)
-        num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
-        den = sum((x - mx) ** 2 for x in xs)
-        return (num / den) if den else 0.0
 
     def _update_batch_table(self, *_args):
         if not hasattr(self, 'batch_table'):
@@ -1930,7 +1925,7 @@ class MainWindow(QMainWindow):
             if mkey not in rec.get('mkeys', []):
                 rows.append({
                     'rec': rec, 'designs': len(rec.get('subs', [])), 'design_used': '—',
-                    'sites': len(rec.get('sites', [])), 'mean': 'N/A', 'std': 'N/A',
+                    'sites': len(rec.get('sites', [])), 'mean': 'N/A', 'median': 'N/A', 'std': 'N/A',
                     'pass': 0, 'fail': 0, 'yield': 'N/A', 'status': 'No measurement',
                     'yield_num': -1.0,
                 })
@@ -1940,9 +1935,10 @@ class MainWindow(QMainWindow):
             vals = [v for v in values.values() if v is not None and math.isfinite(v)]
             if vals:
                 mean_v = statistics.mean(vals)
+                med_v = statistics.median(vals)
                 std_v = statistics.pstdev(vals)
             else:
-                mean_v = std_v = None
+                mean_v = med_v = std_v = None
 
             passed = 0
             for v in vals:
@@ -1998,9 +1994,10 @@ class MainWindow(QMainWindow):
             rows.append({
                 'rec': rec,
                 'designs': len(rec.get('subs', [])),
-                'design_used': ('—' if design is None else str(design)),
+                'design_used': ('All' if self.batch_design_mode_combo.currentData() is None else ('—' if design is None else str(design))),
                 'sites': len(rec.get('sites', [])),
                 'mean': si_fmt(mean_v) if mean_v is not None else 'N/A',
+                'median': si_fmt(med_v) if med_v is not None else 'N/A',
                 'std': si_fmt(std_v) if std_v is not None else 'N/A',
                 'pass': passed,
                 'fail': fail,
@@ -2032,6 +2029,7 @@ class MainWindow(QMainWindow):
                 row['design_used'],
                 str(row['sites']),
                 row['mean'],
+                row['median'],
                 row['std'],
                 str(row['pass']),
                 str(row['fail']),
@@ -2040,9 +2038,9 @@ class MainWindow(QMainWindow):
             ]
             for col, txt in enumerate(vals):
                 it = QTableWidgetItem(txt)
-                if col in (7, 8):
+                if col in (8, 9):
                     it.setTextAlignment(Qt.AlignCenter)
-                if col == 9:
+                if col == 10:
                     it.setTextAlignment(Qt.AlignCenter)
                     if row['yield_num'] >= 90:
                         it.setForeground(QColor(T['pass_fg']))
@@ -2057,49 +2055,18 @@ class MainWindow(QMainWindow):
 
         overall = (total_pass / total_valid * 100.0) if total_valid else 0.0
         prod_txt = 'on' if use_prod else 'off'
+        dmode = self.batch_design_mode_combo.currentText() if hasattr(self, 'batch_design_mode_combo') else 'All designs'
         self.batch_summary.setText(
             f'Batch folder: {self._batch_dir or "—"}\n'
-            f'Wafers: {len(rows)}  ·  Measurement: {mkey}  ·  Prod limits: {prod_txt}\n'
+            f'Wafers: {len(rows)}  ·  Measurement: {mkey}  ·  Design mode: {dmode}  ·  Prod limits: {prod_txt}\n'
             f'Overall pass: {total_pass}/{total_valid}  ·  Overall yield: {overall:.1f}%\n'
             f'Tip: double-click a wafer row to open it in the wafer map view.'
         )
         self._batch_rows = rows
-        self._update_trend_panel(rows)
         self._update_radial_panel(rows)
         self._sync_golden_combo(rows)
         self._update_golden_table()
         self._compare_selected_wafers()
-
-    def _update_trend_panel(self, rows: list[dict]):
-        ordered = sorted(rows, key=lambda r: r['rec']['name'].lower())
-        self.batch_trend_table.setRowCount(len(ordered))
-        ys = []
-        means = []
-        stds = []
-        for i, row in enumerate(ordered):
-            yv = row['yield_num']
-            if yv >= 0:
-                ys.append(yv)
-            if row['mean_num'] is not None:
-                means.append(row['mean_num'])
-            if row['std_num'] is not None:
-                stds.append(row['std_num'])
-            vals = [str(i + 1), row['rec']['name'], row['yield'], row['mean'], row['std']]
-            for col, txt in enumerate(vals):
-                self.batch_trend_table.setItem(i, col, QTableWidgetItem(txt))
-
-        y_slope = self._linear_slope(ys) if ys else 0.0
-        drift = 'stable'
-        if y_slope > 0.2:
-            drift = 'improving'
-        elif y_slope < -0.2:
-            drift = 'degrading'
-        mean_txt = si_fmt(statistics.mean(means)) if means else 'N/A'
-        std_txt = si_fmt(statistics.mean(stds)) if stds else 'N/A'
-        self.batch_trend_summary.setText(
-            f'Wafer order trend: {drift}  ·  Yield slope: {y_slope:.3f} per wafer  ·  '
-            f'Batch mean(avg): {mean_txt}  ·  Batch std(avg): {std_txt}'
-        )
 
     def _update_radial_panel(self, rows: list[dict]):
         self.batch_radial_table.setRowCount(len(rows))
@@ -2209,9 +2176,9 @@ class MainWindow(QMainWindow):
         comp = []
         for row in selected_rows:
             name_it = self.batch_table.item(row, 0)
-            yld_it = self.batch_table.item(row, 9)
-            pass_it = self.batch_table.item(row, 7)
-            fail_it = self.batch_table.item(row, 8)
+            yld_it = self.batch_table.item(row, 10)
+            pass_it = self.batch_table.item(row, 8)
+            fail_it = self.batch_table.item(row, 9)
             mean_it = self.batch_table.item(row, 5)
             if not name_it:
                 continue
@@ -2330,7 +2297,7 @@ class MainWindow(QMainWindow):
         p.end()
         return img
 
-    def _export_batch_report(self):
+    def _export_batch_csv(self):
         if not self._batch_rows:
             QMessageBox.information(self, 'No batch data', 'Load a batch folder first.')
             return
@@ -2338,13 +2305,12 @@ class MainWindow(QMainWindow):
         if self._batch_dir:
             default_name = f'{os.path.basename(self._batch_dir)}_batch_report.csv'
         csv_path, _ = QFileDialog.getSaveFileName(
-            self, 'Export Batch Report (CSV + PDF)', default_name, 'CSV Files (*.csv)'
+            self, 'Export Batch Report CSV', default_name, 'CSV Files (*.csv)'
         )
         if not csv_path:
             return
         if not csv_path.lower().endswith('.csv'):
             csv_path += '.csv'
-        pdf_path = os.path.splitext(csv_path)[0] + '.pdf'
 
         mkey = self.batch_mkey_combo.currentText().strip()
         lo, hi, prod_lo, prod_hi = self._limits.get(mkey, (None, None, None, None))
@@ -2357,14 +2323,14 @@ class MainWindow(QMainWindow):
                 wr.writerow(['Spec Low', lo, 'Spec High', hi, 'Prod Low', prod_lo, 'Prod High', prod_hi])
                 wr.writerow([])
                 wr.writerow([
-                    'Wafer File', 'Lot', 'Designs', 'Design Used', 'Sites', 'Mean', 'Std Dev',
+                    'Wafer File', 'Lot', 'Designs', 'Design Used', 'Sites', 'Mean', 'Median', 'Std Dev',
                     'Pass', 'Fail', 'Yield', 'Center Mean', 'Edge Mean', 'Edge-Center', 'Edge Fail %', 'Status'
                 ])
                 for r in self._batch_rows:
                     edge_delta = (r['edge_mean'] - r['center_mean']) if (r['edge_mean'] is not None and r['center_mean'] is not None) else None
                     wr.writerow([
                         r['rec']['name'], r['rec']['header'].get('LOT', '—'), r['designs'], r['design_used'], r['sites'],
-                        r['mean'], r['std'], r['pass'], r['fail'], r['yield'],
+                        r['mean'], r['median'], r['std'], r['pass'], r['fail'], r['yield'],
                         si_fmt(r['center_mean']) if r['center_mean'] is not None else 'N/A',
                         si_fmt(r['edge_mean']) if r['edge_mean'] is not None else 'N/A',
                         si_fmt(edge_delta) if edge_delta is not None else 'N/A',
@@ -2374,7 +2340,25 @@ class MainWindow(QMainWindow):
         except OSError as e:
             QMessageBox.critical(self, 'Export Error', f'Failed to write CSV file:\n{e}')
             return
+        self.status.showMessage(f'  Exported batch CSV  ·  {csv_path}')
 
+    def _export_batch_pdf(self):
+        if not self._batch_rows:
+            QMessageBox.information(self, 'No batch data', 'Load a batch folder first.')
+            return
+        default_name = 'batch_report.pdf'
+        if self._batch_dir:
+            default_name = f'{os.path.basename(self._batch_dir)}_batch_report.pdf'
+        pdf_path, _ = QFileDialog.getSaveFileName(
+            self, 'Export Batch PDF Summary', default_name, 'PDF Files (*.pdf)'
+        )
+        if not pdf_path:
+            return
+        if not pdf_path.lower().endswith('.pdf'):
+            pdf_path += '.pdf'
+
+        mkey = self.batch_mkey_combo.currentText().strip()
+        lo, hi, prod_lo, prod_hi = self._limits.get(mkey, (None, None, None, None))
         try:
             pdf = QPdfWriter(pdf_path)
             pdf.setPageSize(QPageSize(QPageSize.A4))
@@ -2412,10 +2396,9 @@ class MainWindow(QMainWindow):
                 x += card_w + 20
             p.end()
         except Exception as e:
-            QMessageBox.critical(self, 'Export Error', f'CSV exported but PDF failed:\n{e}')
+            QMessageBox.critical(self, 'Export Error', f'Failed to write PDF file:\n{e}')
             return
-
-        self.status.showMessage(f'  Exported batch report  ·  {csv_path}  ·  {pdf_path}')
+        self.status.showMessage(f'  Exported batch PDF  ·  {pdf_path}')
 
     # ── export ────────────────────────────────────────────────────────────────
 
@@ -2492,9 +2475,11 @@ class MainWindow(QMainWindow):
         self.prod_low_edit.setEnabled(has and self._use_prod_limits)
         self.prod_high_edit.setEnabled(has and self._use_prod_limits)
         self.batch_mkey_combo.setEnabled(has_batch)
+        self.batch_design_mode_combo.setEnabled(has_batch)
         self.batch_sort_combo.setEnabled(has_batch)
         self.batch_compare_btn.setEnabled(has_batch)
-        self.batch_export_btn.setEnabled(has_batch)
+        self.batch_export_csv_btn.setEnabled(has_batch)
+        self.batch_export_pdf_btn.setEnabled(has_batch)
         self.batch_golden_combo.setEnabled(has_batch)
         self.batch_low_edit.setEnabled(has_batch)
         self.batch_high_edit.setEnabled(has_batch)
