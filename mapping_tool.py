@@ -2134,16 +2134,19 @@ class MainWindow(QMainWindow):
         golden_row = next((r for r in rows if r['rec']['name'] == gname), None)
         if not golden_row:
             self.batch_golden_table.setRowCount(0)
+            self.batch_golden_summary.setText('Select a golden wafer to score the batch.')
             return
         mkey = self.batch_mkey_combo.currentText().strip()
-        g_design = None if golden_row['design_used'] == '—' else int(golden_row['design_used'])
+        g_design_text = str(golden_row.get('design_used', 'All'))
+        g_design = None if g_design_text in ('—', 'All') else int(g_design_text)
         g_values = {
             s['name']: get_site_value(s, mkey, g_design)
             for s in golden_row['rec'].get('sites', [])
         }
         scores = []
         for row in rows:
-            design = None if row['design_used'] == '—' else int(row['design_used'])
+            d_text = str(row.get('design_used', 'All'))
+            design = None if d_text in ('—', 'All') else int(d_text)
             vals = {
                 s['name']: get_site_value(s, mkey, design)
                 for s in row['rec'].get('sites', [])
@@ -2166,7 +2169,9 @@ class MainWindow(QMainWindow):
             scores.append((row['rec']['name'], score, common, avg_abs))
         scores.sort(key=lambda x: x[1], reverse=True)
         self.batch_golden_table.setRowCount(len(scores))
+        max_common = 0
         for i, (name, score, common, avg_abs) in enumerate(scores):
+            max_common = max(max_common, common)
             vals = [name, f'{score:.1f}', str(common), si_fmt(avg_abs) if avg_abs is not None else 'N/A']
             for col, txt in enumerate(vals):
                 it = QTableWidgetItem(txt)
@@ -2178,9 +2183,14 @@ class MainWindow(QMainWindow):
                     else:
                         it.setForeground(QColor(T['warn']))
                 self.batch_golden_table.setItem(i, col, it)
-        self.batch_golden_summary.setText(
-            f'Golden wafer: {gname}  ·  Scores are based on average absolute delta normalized to golden sigma.'
-        )
+        if max_common == 0:
+            self.batch_golden_summary.setText(
+                f'Golden wafer: {gname}  ·  No common die values found for this measurement/design mode.'
+            )
+        else:
+            self.batch_golden_summary.setText(
+                f'Golden wafer: {gname}  ·  Scores are based on average absolute delta normalized to golden sigma.'
+            )
 
     def _compare_selected_wafers(self):
         if not hasattr(self, 'batch_table'):
