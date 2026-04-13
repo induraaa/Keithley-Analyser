@@ -1500,8 +1500,8 @@ class MainWindow(QMainWindow):
         self.batch_prod_toggle.blockSignals(True)
         self.batch_prod_toggle.setChecked(self._use_prod_limits)
         self.batch_prod_toggle.blockSignals(False)
-        self.batch_prod_low_edit.setEnabled(self._use_prod_limits)
-        self.batch_prod_high_edit.setEnabled(self._use_prod_limits)
+        self.batch_prod_low_edit.setEnabled(bool(self._use_prod_limits))
+        self.batch_prod_high_edit.setEnabled(bool(self._use_prod_limits))
 
     def _load_batch_folder(self, folder: str):
         try:
@@ -2484,9 +2484,6 @@ class MainWindow(QMainWindow):
 
     def _update_ui_state(self):
         has = bool(self._sites)
-        has_batch = bool(self._batch_records)
-        if hasattr(self, 'batch_table') and self.batch_table.rowCount() > 0:
-            has_batch = True
         self.design_combo.setEnabled(has)
         self.mkey_combo.setEnabled(has)
         self.low_edit.setEnabled(has)
@@ -2495,24 +2492,23 @@ class MainWindow(QMainWindow):
         self.prod_low_edit.setEnabled(has and self._use_prod_limits)
         self.prod_high_edit.setEnabled(has and self._use_prod_limits)
 
-        # Batch controls should stay interactive once any batch data is visible.
+        # Keep batch UI interactive at all times; handlers validate data availability.
         self.batch_sections.setEnabled(True)
         self.batch_load_btn.setEnabled(True)
-        self.batch_mkey_combo.setEnabled(has_batch)
-        self.batch_design_mode_combo.setEnabled(has_batch)
-        self.batch_sort_combo.setEnabled(has_batch)
-        self.batch_compare_btn.setEnabled(has_batch)
-        self.batch_export_csv_btn.setEnabled(has_batch)
-        self.batch_export_pdf_btn.setEnabled(has_batch)
-        self.batch_load_btn.setEnabled(True)
-        self.batch_golden_combo.setEnabled(has_batch)
-        self.batch_low_edit.setEnabled(has_batch)
-        self.batch_high_edit.setEnabled(has_batch)
-        self.batch_prod_toggle.setEnabled(has_batch)
-        self.batch_prod_low_edit.setEnabled(has_batch and self._use_prod_limits)
-        self.batch_prod_high_edit.setEnabled(has_batch and self._use_prod_limits)
-        self.batch_limits_apply_btn.setEnabled(has_batch)
-        self.batch_limits_clear_btn.setEnabled(has_batch)
+        self.batch_mkey_combo.setEnabled(True)
+        self.batch_design_mode_combo.setEnabled(True)
+        self.batch_sort_combo.setEnabled(True)
+        self.batch_compare_btn.setEnabled(True)
+        self.batch_export_csv_btn.setEnabled(True)
+        self.batch_export_pdf_btn.setEnabled(True)
+        self.batch_golden_combo.setEnabled(True)
+        self.batch_low_edit.setEnabled(True)
+        self.batch_high_edit.setEnabled(True)
+        self.batch_prod_toggle.setEnabled(True)
+        self.batch_prod_low_edit.setEnabled(self._use_prod_limits)
+        self.batch_prod_high_edit.setEnabled(self._use_prod_limits)
+        self.batch_limits_apply_btn.setEnabled(True)
+        self.batch_limits_clear_btn.setEnabled(True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ENTRY POINT
