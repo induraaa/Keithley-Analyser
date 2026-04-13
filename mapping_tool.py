@@ -1341,6 +1341,8 @@ class MainWindow(QMainWindow):
         self.batch_table.setMinimumHeight(180)
         self.batch_table.setMaximumHeight(260)
         self.batch_table.setSortingEnabled(False)
+        self.batch_table.horizontalHeader().setSectionsClickable(False)
+        self.batch_table.horizontalHeader().setSortIndicatorShown(False)
         self.batch_table.itemDoubleClicked.connect(self._open_batch_selected_wafer)
         self.batch_table.itemSelectionChanged.connect(self._compare_selected_wafers)
         bav.addWidget(self.batch_table)
@@ -1358,6 +1360,8 @@ class MainWindow(QMainWindow):
         self.batch_radial_table.verticalHeader().setVisible(False)
         self.batch_radial_table.setMaximumHeight(220)
         self.batch_radial_table.setSortingEnabled(False)
+        self.batch_radial_table.horizontalHeader().setSectionsClickable(False)
+        self.batch_radial_table.horizontalHeader().setSortIndicatorShown(False)
         rvb.addWidget(self.batch_radial_table)
         bav.addWidget(radial_box)
 
@@ -1380,6 +1384,8 @@ class MainWindow(QMainWindow):
         self.batch_golden_table.verticalHeader().setVisible(False)
         self.batch_golden_table.setMaximumHeight(220)
         self.batch_golden_table.setSortingEnabled(False)
+        self.batch_golden_table.horizontalHeader().setSectionsClickable(False)
+        self.batch_golden_table.horizontalHeader().setSortIndicatorShown(False)
         gv.addWidget(self.batch_golden_table)
         bav.addWidget(golden_box)
 
@@ -1535,11 +1541,21 @@ class MainWindow(QMainWindow):
                     'tests': tests,
                     'subs': subs,
                 })
-            except Exception:
-                failures.append(os.path.basename(path))
+            except Exception as e:
+                failures.append((os.path.basename(path), str(e)))
             self.batch_progress.setValue(idx)
             self.batch_summary.setText(f'Loading {idx}/{len(kdf_paths)} wafer files...')
             QApplication.processEvents()
+
+        if not self._batch_records:
+            self.batch_progress.setVisible(False)
+            self._update_ui_state()
+            detail = '\n'.join([f'- {nm}: {err}' for nm, err in failures[:6]]) or 'No files could be parsed.'
+            QMessageBox.critical(
+                self, 'Batch Parse Error',
+                f'No KDF files could be parsed from this folder.\n\n{detail}'
+            )
+            return
 
         mkeys = sorted({mk for rec in self._batch_records for mk in rec['mkeys']})
         batch_subs = sorted({sn for rec in self._batch_records for sn in rec.get('subs', [])})
