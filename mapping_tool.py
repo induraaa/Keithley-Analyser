@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QStyle, QStyleOptionComboBox, QStyledItemDelegate
 )
-from PySide6.QtCore import Qt, QRectF, QPointF, QPoint, Signal, QSize, QRect
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSize, QRect
 from PySide6.QtGui import (
     QPainter, QColor, QBrush, QPen, QFont,
     QLinearGradient, QRadialGradient, QPixmap, QIcon, QAction,
@@ -65,6 +65,8 @@ T = {
     "hover_border":  "#1565c0",
     "warn":          "#e65100",
 }
+
+INVALID_LIMIT = object()
 
 SS = """
 QMainWindow,QWidget{
@@ -315,7 +317,7 @@ class ArrowComboBox(QComboBox):
         try:
             popup.setWindowFlag(Qt.FramelessWindowHint, True)
             popup.setWindowFlag(Qt.NoDropShadowWindowHint, True)
-        except Exception:
+        except AttributeError:
             # Some Qt builds may not support NoDropShadowWindowHint; ignore gracefully.
             popup.setWindowFlag(Qt.FramelessWindowHint, True)
 
@@ -498,12 +500,17 @@ def get_site_value(site: dict, mkey: str, subsite: int | None = None) -> float |
         v = site['subsites'].get(subsite, {}).get(mkey)
         return v if (v is not None and math.isfinite(v)) else None
 
-    values = [
-        v for sub in site['subsites'].values()
-        for k, v in sub.items()
-        if k == mkey and v is not None and math.isfinite(v)
-    ]
-    return statistics.mean(values) if values else None
+    # Aggregate mode is only meaningful for single-design dies.
+    values = {
+        sn: sub_vals.get(mkey)
+        for sn, sub_vals in site['subsites'].items()
+    }
+    finite = [v for v in values.values() if v is not None and math.isfinite(v)]
+    if not finite:
+        return None
+    if len(finite) == 1:
+        return finite[0]
+    return None
 
 
 def all_subsites(sites: list) -> list[int]:
@@ -1809,12 +1816,8 @@ class MainWindow(QMainWindow):
     def _on_mkey_changed(self, mkey: str):
         if mkey not in self._mkeys:
             return
-        if self._current_mkey:
-            lo = self._parse_limit(self.low_edit.text())
-            hi = self._parse_limit(self.high_edit.text())
-            prod_lo = self._parse_limit(self.prod_low_edit.text())
-            prod_hi = self._parse_limit(self.prod_high_edit.text())
-            self._limits[self._current_mkey] = (lo, hi, prod_lo, prod_hi)
+        if self._current_mkey and not self._commit_limits_from_main_fields(self._current_mkey):
+            return
 
         self._current_mkey = mkey
         lo, hi, prod_lo, prod_hi = self._limits.get(mkey, (None, None, None, None))
@@ -1830,28 +1833,24 @@ class MainWindow(QMainWindow):
         self._update_batch_table()
 
     def _apply_limits(self):
-        lo = self._parse_limit(self.low_edit.text(),  'Low')
-        hi = self._parse_limit(self.high_edit.text(), 'High')
-        prod_lo = self._parse_limit(self.prod_low_edit.text(),  'Prod Low')
-        prod_hi = self._parse_limit(self.prod_high_edit.text(), 'Prod High')
-        if lo is None and self.low_edit.text().strip():
+        if self._current_mkey and not self._commit_limits_from_main_fields(self._current_mkey):
             return
-        if hi is None and self.high_edit.text().strip():
-            return
-        if prod_lo is None and self.prod_low_edit.text().strip():
-            return
-        if prod_hi is None and self.prod_high_edit.text().strip():
-            return
-        if self._current_mkey:
-            self._limits[self._current_mkey] = (lo, hi, prod_lo, prod_hi)
-            if self.batch_mkey_combo.currentText().strip() == self._current_mkey:
-                self._limits[self.batch_mkey_combo.currentText().strip()] = (lo, hi, prod_lo, prod_hi)
         self._rebuild_design_combo()
         self._refresh_canvas()
         self._sync_batch_limit_controls()
         self._update_batch_table()
 
     def _clear_limits(self):
+        if self._current_mkey:
+            ans = QMessageBox.question(
+                self,
+                'Clear limits',
+                f'Clear spec and production limits for {self._current_mkey}?',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                return
         self.low_edit.clear(); self.high_edit.clear()
         self.prod_low_edit.clear(); self.prod_high_edit.clear()
         if self._current_mkey:
@@ -1894,19 +1893,15 @@ class MainWindow(QMainWindow):
         if not mkey:
             QMessageBox.information(self, 'No measurement', 'Select a measurement first.')
             return
-        lo = self._parse_limit(self.batch_low_edit.text(), 'Spec Low')
-        hi = self._parse_limit(self.batch_high_edit.text(), 'Spec High')
-        prod_lo = self._parse_limit(self.batch_prod_low_edit.text(), 'Prod Low')
-        prod_hi = self._parse_limit(self.batch_prod_high_edit.text(), 'Prod High')
-        if lo is None and self.batch_low_edit.text().strip():
+        limits = self._collect_limits(
+            self.batch_low_edit.text(), self.batch_high_edit.text(),
+            self.batch_prod_low_edit.text(), self.batch_prod_high_edit.text(),
+            'Spec Low', 'Spec High',
+        )
+        if limits is INVALID_LIMIT:
             return
-        if hi is None and self.batch_high_edit.text().strip():
-            return
-        if prod_lo is None and self.batch_prod_low_edit.text().strip():
-            return
-        if prod_hi is None and self.batch_prod_high_edit.text().strip():
-            return
-        self._limits[mkey] = (lo, hi, prod_lo, prod_hi)
+        lo, hi, prod_lo, prod_hi = limits
+        self._limits[mkey] = limits
         if self._current_mkey == mkey:
             self.low_edit.setText('' if lo is None else str(lo))
             self.high_edit.setText('' if hi is None else str(hi))
@@ -1934,7 +1929,7 @@ class MainWindow(QMainWindow):
         self._refresh_canvas()
         self._update_batch_table()
 
-    def _parse_limit(self, text: str, label: str = '') -> float | None:
+    def _parse_limit(self, text: str, label: str = ''):
         text = text.strip()
         if not text:
             return None
@@ -1944,7 +1939,30 @@ class MainWindow(QMainWindow):
             if label:
                 QMessageBox.warning(self, 'Invalid value',
                                     f'{label} limit must be a number (e.g. 9.5 or 1e-12).')
-            return None
+            return INVALID_LIMIT
+
+    def _collect_limits(self, low_text: str, high_text: str, prod_low_text: str, prod_high_text: str,
+                        low_label: str, high_label: str):
+        lo = self._parse_limit(low_text, low_label)
+        hi = self._parse_limit(high_text, high_label)
+        prod_lo = self._parse_limit(prod_low_text, 'Prod Low')
+        prod_hi = self._parse_limit(prod_high_text, 'Prod High')
+        if INVALID_LIMIT in (lo, hi, prod_lo, prod_hi):
+            return INVALID_LIMIT
+        return lo, hi, prod_lo, prod_hi
+
+    def _commit_limits_from_main_fields(self, mkey: str) -> bool:
+        limits = self._collect_limits(
+            self.low_edit.text(), self.high_edit.text(),
+            self.prod_low_edit.text(), self.prod_high_edit.text(),
+            'Low', 'High',
+        )
+        if limits is INVALID_LIMIT:
+            return False
+        self._limits[mkey] = limits
+        if self.batch_mkey_combo.currentText().strip() == mkey:
+            self._limits[self.batch_mkey_combo.currentText().strip()] = limits
+        return True
 
     def _refresh_canvas(self):
         if not self._sites or not self._current_mkey:
@@ -2005,6 +2023,15 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'batch_table'):
             return
         self._sync_batch_limit_controls()
+        prev_selected_paths = set()
+        sel_model = self.batch_table.selectionModel()
+        if sel_model:
+            for idx in sel_model.selectedRows():
+                it = self.batch_table.item(idx.row(), 0)
+                if it is not None:
+                    path = it.data(Qt.UserRole)
+                    if path:
+                        prev_selected_paths.add(path)
         if not self._batch_records:
             self.batch_table.setRowCount(0)
             self.batch_compare_summary.setText('Select two or more wafers to compare.')
@@ -2126,6 +2153,7 @@ class MainWindow(QMainWindow):
         else:
             rows.sort(key=lambda r: r['yield_num'], reverse=True)
 
+        self.batch_table.blockSignals(True)
         self.batch_table.setRowCount(len(rows))
         for i, row in enumerate(rows):
             rec = row['rec']
@@ -2158,6 +2186,12 @@ class MainWindow(QMainWindow):
                 self.batch_table.setItem(i, col, it)
             # store path in first column item for easy retrieval on double click
             self.batch_table.item(i, 0).setData(Qt.UserRole, rec['path'])
+            if rec.get('path') in prev_selected_paths:
+                for col in range(self.batch_table.columnCount()):
+                    cell = self.batch_table.item(i, col)
+                    if cell is not None:
+                        cell.setSelected(True)
+        self.batch_table.blockSignals(False)
 
         overall = (total_pass / total_valid * 100.0) if total_valid else 0.0
         prod_txt = 'on' if use_prod else 'off'
@@ -2172,7 +2206,8 @@ class MainWindow(QMainWindow):
         self._update_radial_panel(rows)
         self._sync_golden_combo(rows)
         self._update_golden_table()
-        self._compare_selected_wafers()
+        if self.batch_table.selectionModel() and self.batch_table.selectionModel().selectedRows():
+            self._compare_selected_wafers()
 
     def _update_radial_panel(self, rows: list[dict]):
         self.batch_radial_table.setRowCount(len(rows))
@@ -2231,6 +2266,11 @@ class MainWindow(QMainWindow):
             s['name']: get_site_value(s, mkey, g_design)
             for s in golden_row['rec'].get('sites', [])
         }
+        g_sigma_values = [v for v in g_values.values() if v is not None]
+        if not g_sigma_values:
+            gstd = None
+        else:
+            gstd = statistics.pstdev(g_sigma_values) or 1.0
         scores = []
         for row in rows:
             d_text = str(row.get('design_used', 'All'))
@@ -2248,8 +2288,7 @@ class MainWindow(QMainWindow):
             common = len(diffs)
             if common:
                 avg_abs = statistics.mean(diffs)
-                gstd = statistics.pstdev([v for v in g_values.values() if v is not None]) or 1.0
-                nr = avg_abs / gstd
+                nr = avg_abs / gstd if gstd else 0.0
                 score = max(0.0, min(100.0, 100.0 - nr * 25.0))
             else:
                 avg_abs = None
@@ -2637,17 +2676,15 @@ class MainWindow(QMainWindow):
         pw = lw * SCALE
         ph = lh * SCALE
 
-        img = QImage(pw, ph, QImage.Format_ARGB32_Premultiplied)
-        img.fill(Qt.transparent)
-
-        painter = QPainter(img)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.TextAntialiasing)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        painter.scale(SCALE, SCALE)
-        # PySide6 compatibility: some builds require an explicit targetOffset.
-        self.canvas.render(painter, QPoint(0, 0))
-        painter.end()
+        # Render to an off-screen pixmap first to avoid viewport clipping.
+        src = QPixmap(lw, lh)
+        src.fill(Qt.transparent)
+        src_painter = QPainter(src)
+        src_painter.setRenderHint(QPainter.Antialiasing)
+        src_painter.setRenderHint(QPainter.TextAntialiasing)
+        self.canvas.render(src_painter)
+        src_painter.end()
+        img = src.toImage().scaled(pw, ph, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
 
         fmt = b'PNG'
         if path.lower().endswith(('.jpg', '.jpeg')):
