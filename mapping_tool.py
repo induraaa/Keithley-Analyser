@@ -1148,7 +1148,7 @@ class HistogramPanel(QWidget):
             bins[idx] += 1
         max_bin = max(bins) if bins else 1
 
-        chart = QRectF(36, 14, max(80, self.width() - 48), max(120, self.height() - 36))
+        chart = QRectF(48, 18, max(80, self.width() - 64), max(120, self.height() - 56))
         p.setPen(QPen(QColor(T['border']), 1))
         p.drawRect(chart)
         bw = chart.width() / self._bins
@@ -1196,10 +1196,25 @@ class HistogramPanel(QWidget):
                 p.setPen(QPen(QColor(T['accent_dark']), 2))
                 p.drawPolyline(curve)
 
+        # Axis labels and tick annotations.
         p.setPen(QColor(T['text_secondary']))
-        p.setFont(QFont('Consolas', 9))
+        font_ticks = QFont('Consolas', 9)
+        p.setFont(font_ticks)
         p.drawText(QRectF(chart.left(), chart.bottom() + 2, 80, 14), si_fmt(vmin))
         p.drawText(QRectF(chart.right() - 80, chart.bottom() + 2, 80, 14), Qt.AlignRight, si_fmt(vmax))
+
+        # X axis name: measurement value.
+        p.setFont(QFont('Segoe UI', 9))
+        p.drawText(QRectF(chart.left(), chart.bottom() + 18, chart.width(), 16),
+                   Qt.AlignCenter, 'Measurement value')
+
+        # Y axis name: count, rotated on the left.
+        p.save()
+        p.translate(chart.left() - 26, chart.top() + chart.height() / 2)
+        p.rotate(-90)
+        p.drawText(QRectF(-chart.height() / 2, -8, chart.height(), 16),
+                   Qt.AlignCenter, 'Count')
+        p.restore()
 
 
 class ScatterPanel(QWidget):
@@ -1606,18 +1621,23 @@ class MainWindow(QMainWindow):
         self.detail_panel = SiteDetailPanel()
         self.stats_panel = StatsPanel()
         self.analytics_panel = QWidget()
-        av = QVBoxLayout(self.analytics_panel); av.setContentsMargins(8, 8, 8, 8); av.setSpacing(6)
-        self.continuous_heatmap_toggle = QCheckBox()
-        self.continuous_heatmap_toggle.setText('')
-        self.continuous_heatmap_toggle.setToolTip('Continuous value heatmap')
+        av = QVBoxLayout(self.analytics_panel); av.setContentsMargins(8, 8, 8, 8); av.setSpacing(8)
+
+        # Top row: continuous heatmap toggle with label, plus Cp/Cpk summary.
+        top_row = QHBoxLayout(); top_row.setSpacing(6)
+        self.continuous_heatmap_toggle = QCheckBox('Continuous heatmap')
+        self.continuous_heatmap_toggle.setToolTip('Toggle between discrete pass/fail coloring and continuous value heatmap.')
         self.continuous_heatmap_toggle.toggled.connect(self._on_continuous_heatmap_toggled)
-        av.addWidget(self.continuous_heatmap_toggle)
+        top_row.addWidget(self.continuous_heatmap_toggle)
         self.cpk_label = QLabel('Cp/Cpk: N/A')
         self.cpk_label.setWordWrap(True)
         self.cpk_label.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
-        av.addWidget(self.cpk_label)
+        top_row.addWidget(self.cpk_label, stretch=1)
+        av.addLayout(top_row)
+
+        # Histogram / bell-curve panel takes remaining vertical space.
         self.hist_panel = HistogramPanel()
-        av.addWidget(self.hist_panel)
+        av.addWidget(self.hist_panel, stretch=1)
         tabs.addTab(self.analytics_panel, 'Analysis')
         tabs.addTab(self.stats_panel, 'Statistics')
         tabs.addTab(self.detail_panel, 'Die Detail')
