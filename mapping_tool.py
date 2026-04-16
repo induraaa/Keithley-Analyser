@@ -1301,10 +1301,14 @@ class MiniHeatmapPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._points = []
+        self._vmin = None
+        self._vmax = None
         self.setMinimumHeight(150)
 
-    def set_data(self, points: list[dict]):
+    def set_data(self, points: list[dict], vmin=None, vmax=None):
         self._points = points
+        self._vmin = vmin
+        self._vmax = vmax
         self.update()
 
     def paintEvent(self, _event):
@@ -1327,12 +1331,17 @@ class MiniHeatmapPanel(QWidget):
         oy = body.top() + (body.height() - cell * n_rows) / 2.0
 
         for d in self._points:
-            if d['status'] == 'fail':
-                bg = QColor(FAIL_COLOR)
-            elif d['status'] == 'warn':
-                bg = QColor(WARN_COLOR)
-            elif d['status'] == 'pass':
-                bg = QColor(PASS_COLOR)
+            value = d.get('value')
+            if value is not None and self._vmin is not None and self._vmax is not None:
+                if abs(self._vmax - self._vmin) < 1e-18:
+                    n = 0.5
+                else:
+                    n = (value - self._vmin) / (self._vmax - self._vmin)
+                n = max(0.0, min(1.0, n))
+                if n <= 0.5:
+                    bg = _lerp_color(QColor(PASS_COLOR), QColor(WARN_COLOR), n * 2.0)
+                else:
+                    bg = _lerp_color(QColor(WARN_COLOR), QColor(FAIL_COLOR), (n - 0.5) * 2.0)
             else:
                 bg = QColor(T['nodata_bg'])
             x = ox + (d['x'] - x0) * cell
@@ -2094,7 +2103,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'yield_donut_panel'):
             self.yield_donut_panel.set_data(0, 0, 0)
         if hasattr(self, 'mini_heatmap_panel'):
-            self.mini_heatmap_panel.set_data([])
+            self.mini_heatmap_panel.set_data([], None, None)
         self.cpk_label.setText('Cp/Cpk: N/A')
         self.batch_trend_panel.set_data([])
         self.batch_fail_site_panel.set_data([])
@@ -2151,7 +2160,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'yield_donut_panel'):
                 self.yield_donut_panel.set_data(0, 0, 0)
             if hasattr(self, 'mini_heatmap_panel'):
-                self.mini_heatmap_panel.set_data([])
+                self.mini_heatmap_panel.set_data([], None, None)
             self.cpk_label.setText('Cp/Cpk: N/A')
             return
         lo, hi, _prod_lo, _prod_hi = self._limits.get(self._current_mkey, (None, None, None, None))
@@ -2163,27 +2172,27 @@ class MainWindow(QMainWindow):
         for s in self._sites:
             v = get_site_value(s, self._current_mkey, self._current_sub)
             if v is None or not math.isfinite(v):
-                mini_points.append({'x': s.get('x', 0), 'y': s.get('y', 0), 'status': 'nodata'})
+                mini_points.append({'x': s.get('x', 0), 'y': s.get('y', 0), 'value': None})
                 continue
             finite_vals.append(v)
             is_fail = (lo is not None and v < lo) or (hi is not None and v > hi)
             if is_fail:
                 failed += 1
-                mini_points.append({'x': s.get('x', 0), 'y': s.get('y', 0), 'status': 'fail'})
+                mini_points.append({'x': s.get('x', 0), 'y': s.get('y', 0), 'value': v})
                 continue
             passed += 1
             near_lo = lo is not None and abs(v - lo) <= max(1e-18, abs(lo) * 0.02)
             near_hi = hi is not None and abs(v - hi) <= max(1e-18, abs(hi) * 0.02)
             if near_lo or near_hi:
                 warned += 1
-                mini_points.append({'x': s.get('x', 0), 'y': s.get('y', 0), 'status': 'warn'})
-            else:
-                mini_points.append({'x': s.get('x', 0), 'y': s.get('y', 0), 'status': 'pass'})
+            mini_points.append({'x': s.get('x', 0), 'y': s.get('y', 0), 'value': v})
         self.hist_panel.set_data(finite_vals, lo, hi)
         if hasattr(self, 'yield_donut_panel'):
             self.yield_donut_panel.set_data(passed, failed, warned)
         if hasattr(self, 'mini_heatmap_panel'):
-            self.mini_heatmap_panel.set_data(mini_points)
+            vmin = min(finite_vals) if finite_vals else None
+            vmax = max(finite_vals) if finite_vals else None
+            self.mini_heatmap_panel.set_data(mini_points, vmin, vmax)
 
         if finite_vals and lo is not None and hi is not None:
             mean_v = statistics.mean(finite_vals)
@@ -3384,20 +3393,23 @@ class MainWindow(QMainWindow):
                 path += '.png'
 
         SCALE = 3
-        lw = self.canvas.width()
-        lh = self.canvas.height()
+        lw = max(1, self.canvas.width())
+        lh = max(1, self.canvas.height())
         pw = lw * SCALE
         ph = lh * SCALE
 
-        # Render to an off-screen pixmap first to avoid viewport clipping.
-        src = QPixmap(lw, lh)
-        src.fill(Qt.transparent)
-        src_painter = QPainter(src)
-        src_painter.setRenderHint(QPainter.Antialiasing)
-        src_painter.setRenderHint(QPainter.TextAntialiasing)
-        self.canvas.render(src_painter)
-        src_painter.end()
-        img = src.toImage().scaled(pw, ph, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        # Render directly to a high-resolution image for reliable export.
+        img = QImage(pw, ph, QImage.Format_ARGB32)
+        img.fill(Qt.transparent)
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.scale(SCALE, SCALE)
+        self.canvas.render(painter)
+        painter.end()
+
+        if path.lower().endswith(('.jpg', '.jpeg')):
+            img = img.convertToFormat(QImage.Format_RGB32)
 
         fmt = b'PNG'
         if path.lower().endswith(('.jpg', '.jpeg')):
