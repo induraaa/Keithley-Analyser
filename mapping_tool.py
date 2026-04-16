@@ -1217,6 +1217,63 @@ class HistogramPanel(QWidget):
         p.restore()
 
 
+class OutlierTablePanel(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lo = QVBoxLayout(self); lo.setContentsMargins(0, 0, 0, 0); lo.setSpacing(6)
+        self.summary = QLabel('Largest site deviations from the wafer average.')
+        self.summary.setWordWrap(True)
+        self.summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
+        lo.addWidget(self.summary)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(['Die', 'X', 'Y', 'Value', '|Δ from mean|', 'Status'])
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.Stretch)
+        for col in (1, 2, 3, 4, 5):
+            hh.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setMinimumHeight(190)
+        lo.addWidget(self.table)
+
+    def set_data(self, rows: list[dict], mean_v):
+        self.table.setRowCount(len(rows))
+        if mean_v is None or not rows:
+            self.summary.setText('No outlier data available for current selection.')
+        else:
+            self.summary.setText(
+                f'Largest site deviations from mean = {si_fmt(mean_v)}  ·  showing top {len(rows)} sites'
+            )
+
+        for i, row in enumerate(rows):
+            vals = [
+                row.get('name', '—'),
+                str(row.get('x', '—')),
+                str(row.get('y', '—')),
+                si_fmt(row.get('value')),
+                si_fmt(row.get('abs_delta')),
+                row.get('status', 'N/A'),
+            ]
+            for col, txt in enumerate(vals):
+                it = QTableWidgetItem(txt)
+                if col in (1, 2):
+                    it.setTextAlignment(Qt.AlignCenter)
+                if col in (3, 4):
+                    it.setFont(QFont('Consolas', 11))
+                if col == 5:
+                    status = row.get('status', '')
+                    if status == 'Fail':
+                        it.setForeground(QColor(T['fail_fg']))
+                    elif status == 'Warn':
+                        it.setForeground(QColor(T['warn']))
+                    else:
+                        it.setForeground(QColor(T['pass_fg']))
+                self.table.setItem(i, col, it)
+
+
 class ScatterPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1623,7 +1680,6 @@ class MainWindow(QMainWindow):
         self.analytics_panel = QWidget()
         av = QVBoxLayout(self.analytics_panel); av.setContentsMargins(8, 8, 8, 8); av.setSpacing(8)
 
-        # Top row: continuous heatmap toggle with label, plus Cp/Cpk summary.
         top_row = QHBoxLayout(); top_row.setSpacing(6)
         self.continuous_heatmap_toggle = QCheckBox('Continuous heatmap')
         self.continuous_heatmap_toggle.setToolTip('Toggle between discrete pass/fail coloring and continuous value heatmap.')
@@ -1635,9 +1691,23 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self.cpk_label, stretch=1)
         av.addLayout(top_row)
 
-        # Histogram / bell-curve panel takes remaining vertical space.
+        dist_box = QGroupBox('Distribution')
+        dv = QVBoxLayout(dist_box); dv.setContentsMargins(8, 8, 8, 8); dv.setSpacing(6)
+        dist_summary = QLabel('Histogram with normal-fit overlay for the selected measurement.')
+        dist_summary.setWordWrap(True)
+        dist_summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
+        dv.addWidget(dist_summary)
         self.hist_panel = HistogramPanel()
-        av.addWidget(self.hist_panel, stretch=1)
+        self.hist_panel.setMinimumHeight(170)
+        self.hist_panel.setMaximumHeight(240)
+        dv.addWidget(self.hist_panel)
+        av.addWidget(dist_box)
+
+        outlier_box = QGroupBox('Largest Outliers')
+        ov = QVBoxLayout(outlier_box); ov.setContentsMargins(8, 8, 8, 8); ov.setSpacing(6)
+        self.outlier_panel = OutlierTablePanel()
+        ov.addWidget(self.outlier_panel)
+        av.addWidget(outlier_box, stretch=1)
         tabs.addTab(self.analytics_panel, 'Analysis')
         tabs.addTab(self.stats_panel, 'Statistics')
         tabs.addTab(self.detail_panel, 'Die Detail')
@@ -1995,18 +2065,46 @@ class MainWindow(QMainWindow):
             return
         if not self._sites or not self._current_mkey:
             self.hist_panel.set_data([], None, None)
+            if hasattr(self, 'outlier_panel'):
+                self.outlier_panel.set_data([], None)
             self.cpk_label.setText('Cp/Cpk: N/A')
             return
         lo, hi, _prod_lo, _prod_hi = self._limits.get(self._current_mkey, (None, None, None, None))
-        vals = [
-            get_site_value(s, self._current_mkey, self._current_sub)
-            for s in self._sites
-        ]
-        finite_vals = [v for v in vals if v is not None and math.isfinite(v)]
+        site_rows = []
+        for s in self._sites:
+            v = get_site_value(s, self._current_mkey, self._current_sub)
+            if v is None or not math.isfinite(v):
+                continue
+            site_rows.append({
+                'name': s.get('name', '—'),
+                'x': s.get('x', '—'),
+                'y': s.get('y', '—'),
+                'value': v,
+            })
+        finite_vals = [row['value'] for row in site_rows]
         self.hist_panel.set_data(finite_vals, lo, hi)
 
+        mean_v = statistics.mean(finite_vals) if finite_vals else None
+        if finite_vals and mean_v is not None:
+            for row in site_rows:
+                v = row['value']
+                row['abs_delta'] = abs(v - mean_v)
+                if (lo is not None and v < lo) or (hi is not None and v > hi):
+                    row['status'] = 'Fail'
+                elif (lo is not None and abs(v - lo) <= max(1e-18, abs(lo) * 0.02)) or (
+                    hi is not None and abs(v - hi) <= max(1e-18, abs(hi) * 0.02)
+                ):
+                    row['status'] = 'Warn'
+                else:
+                    row['status'] = 'Pass'
+            site_rows.sort(key=lambda row: row['abs_delta'], reverse=True)
+            if hasattr(self, 'outlier_panel'):
+                self.outlier_panel.set_data(site_rows[:10], mean_v)
+        else:
+            if hasattr(self, 'outlier_panel'):
+                self.outlier_panel.set_data([], None)
+
         if finite_vals and lo is not None and hi is not None:
-            mean_v = statistics.mean(finite_vals)
             std_v = statistics.pstdev(finite_vals)
             if std_v > 0:
                 cp = (hi - lo) / (6.0 * std_v)
