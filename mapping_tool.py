@@ -1381,6 +1381,9 @@ class MainWindow(QMainWindow):
         self._sites:        list      = []
         self._mkeys:        list[str] = []
         self._limits:       dict      = {}
+        # When opening a wafer from "Batch Analysis" we must not wipe the batch-applied
+        # limits; they're stored in `self._limits`.
+        self._preserve_limits_on_next_load: bool = False
         self._current_mkey: str | None = None
         self._filepath:     str | None = None
         self._all_subsites: list[int]  = []
@@ -2121,6 +2124,8 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f'  {msg}')
 
     def _load_kdf(self, path: str):
+        preserve_limits = bool(getattr(self, '_preserve_limits_on_next_load', False))
+        self._preserve_limits_on_next_load = False
         try:
             header, sites, params, tests = parse_kdf(path)
         except Exception as e:
@@ -2132,7 +2137,8 @@ class MainWindow(QMainWindow):
         self._header       = header
         self._sites        = sites
         self._mkeys        = params
-        self._limits       = {}
+        if not preserve_limits:
+            self._limits = {}
         self._current_mkey = None
 
         subs = all_subsites(sites)
@@ -2881,6 +2887,8 @@ class MainWindow(QMainWindow):
         if not path or not os.path.isfile(path):
             QMessageBox.warning(self, 'File Missing', 'Selected wafer file is no longer available.')
             return
+        # Keep the batch-applied limits when switching to Wafer View.
+        self._preserve_limits_on_next_load = True
         self._load_kdf(path)
 
     def _die_fill_hex(self, v, lo, hi, prod_lo, prod_hi, use_prod):
