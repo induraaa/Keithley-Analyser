@@ -1217,61 +1217,85 @@ class HistogramPanel(QWidget):
         p.restore()
 
 
-class OutlierTablePanel(QWidget):
+class YieldDonutPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         lo = QVBoxLayout(self); lo.setContentsMargins(0, 0, 0, 0); lo.setSpacing(6)
-        self.summary = QLabel('Largest site deviations from the wafer average.')
+        self.summary = QLabel('Quick visual summary of pass and fail counts.')
         self.summary.setWordWrap(True)
         self.summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
         lo.addWidget(self.summary)
+        self._pass = 0
+        self._fail = 0
+        self._warn = 0
+        self.setMinimumHeight(210)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(['Die', 'X', 'Y', 'Value', '|Δ from mean|', 'Status'])
-        hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in (1, 2, 3, 4, 5):
-            hh.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setShowGrid(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.setMinimumHeight(190)
-        lo.addWidget(self.table)
-
-    def set_data(self, rows: list[dict], mean_v):
-        self.table.setRowCount(len(rows))
-        if mean_v is None or not rows:
-            self.summary.setText('No outlier data available for current selection.')
+    def set_data(self, passed: int, failed: int, warned: int = 0):
+        self._pass = max(0, int(passed))
+        self._fail = max(0, int(failed))
+        self._warn = max(0, int(warned))
+        total = self._pass + self._fail
+        if total <= 0:
+            self.summary.setText('No yield data available for current selection.')
         else:
+            yield_pct = (self._pass / total) * 100.0
             self.summary.setText(
-                f'Largest site deviations from mean = {si_fmt(mean_v)}  ·  showing top {len(rows)} sites'
+                f'Yield {yield_pct:.1f}%  ·  pass {self._pass}  ·  fail {self._fail}'
+                + (f'  ·  near-limit {self._warn}' if self._warn > 0 else '')
             )
+        self.update()
 
-        for i, row in enumerate(rows):
-            vals = [
-                row.get('name', '—'),
-                str(row.get('x', '—')),
-                str(row.get('y', '—')),
-                si_fmt(row.get('value')),
-                si_fmt(row.get('abs_delta')),
-                row.get('status', 'N/A'),
-            ]
-            for col, txt in enumerate(vals):
-                it = QTableWidgetItem(txt)
-                if col in (1, 2):
-                    it.setTextAlignment(Qt.AlignCenter)
-                if col in (3, 4):
-                    it.setFont(QFont('Consolas', 11))
-                if col == 5:
-                    status = row.get('status', '')
-                    if status == 'Fail':
-                        it.setForeground(QColor(T['fail_fg']))
-                    elif status == 'Warn':
-                        it.setForeground(QColor(T['warn']))
-                    else:
-                        it.setForeground(QColor(T['pass_fg']))
-                self.table.setItem(i, col, it)
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(T['bg_panel']))
+
+        total = self._pass + self._fail
+        if total <= 0:
+            p.setPen(QColor(T['text_dim']))
+            p.drawText(self.rect(), Qt.AlignCenter, 'No pass/fail data')
+            return
+
+        body = self.rect().adjusted(8, 32, -8, -8)
+        donut_size = min(body.width() * 0.62, body.height() - 8)
+        donut_size = max(96.0, donut_size)
+        cx = body.left() + donut_size / 2.0 + 6
+        cy = body.center().y()
+        outer = QRectF(cx - donut_size / 2.0, cy - donut_size / 2.0, donut_size, donut_size)
+        inner_margin = donut_size * 0.24
+        start = 90 * 16
+        pass_span = int(-360 * 16 * (self._pass / total))
+        fail_span = -360 * 16 - pass_span
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(T['pass_fg']))
+        p.drawPie(outer, start, pass_span)
+        p.setBrush(QColor(T['fail_fg']))
+        p.drawPie(outer, start + pass_span, fail_span)
+        p.setBrush(QColor(T['bg_panel']))
+        p.drawEllipse(outer.adjusted(inner_margin, inner_margin, -inner_margin, -inner_margin))
+
+        p.setPen(QColor(T['text_primary']))
+        p.setFont(QFont('Segoe UI', 16, QFont.Bold))
+        p.drawText(outer, Qt.AlignCenter, f'{(self._pass / total) * 100.0:.0f}%')
+
+        legend_x = outer.right() + 14
+        legend_y = outer.top() + 18
+        p.setFont(QFont('Segoe UI', 10))
+        for idx, (label, value, color) in enumerate((
+            ('Pass', self._pass, T['pass_fg']),
+            ('Fail', self._fail, T['fail_fg']),
+            ('Near limit', self._warn, T['warn']),
+        )):
+            if idx == 2 and value <= 0:
+                continue
+            y = legend_y + idx * 28
+            p.setBrush(QColor(color))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(QRectF(legend_x, y, 10, 10))
+            p.setPen(QColor(T['text_primary']))
+            p.drawText(QRectF(legend_x + 16, y - 5, max(80, body.right() - legend_x - 12), 20),
+                       Qt.AlignVCenter, f'{label}: {value}')
 
 
 class ScatterPanel(QWidget):
@@ -1703,11 +1727,11 @@ class MainWindow(QMainWindow):
         dv.addWidget(self.hist_panel)
         av.addWidget(dist_box)
 
-        outlier_box = QGroupBox('Largest Outliers')
-        ov = QVBoxLayout(outlier_box); ov.setContentsMargins(8, 8, 8, 8); ov.setSpacing(6)
-        self.outlier_panel = OutlierTablePanel()
-        ov.addWidget(self.outlier_panel)
-        av.addWidget(outlier_box, stretch=1)
+        yield_box = QGroupBox('Pass / Fail Summary')
+        ov = QVBoxLayout(yield_box); ov.setContentsMargins(8, 8, 8, 8); ov.setSpacing(6)
+        self.yield_donut_panel = YieldDonutPanel()
+        ov.addWidget(self.yield_donut_panel)
+        av.addWidget(yield_box, stretch=1)
         tabs.addTab(self.analytics_panel, 'Analysis')
         tabs.addTab(self.stats_panel, 'Statistics')
         tabs.addTab(self.detail_panel, 'Die Detail')
@@ -2012,6 +2036,8 @@ class MainWindow(QMainWindow):
         self._clear_compare_cards()
         self.canvas.load([], {}, None, None, mkey='')
         self.hist_panel.set_data([], None, None)
+        if hasattr(self, 'yield_donut_panel'):
+            self.yield_donut_panel.set_data(0, 0, 0)
         self.cpk_label.setText('Cp/Cpk: N/A')
         self.batch_trend_panel.set_data([])
         self.batch_fail_site_panel.set_data([])
@@ -2065,46 +2091,35 @@ class MainWindow(QMainWindow):
             return
         if not self._sites or not self._current_mkey:
             self.hist_panel.set_data([], None, None)
-            if hasattr(self, 'outlier_panel'):
-                self.outlier_panel.set_data([], None)
+            if hasattr(self, 'yield_donut_panel'):
+                self.yield_donut_panel.set_data(0, 0, 0)
             self.cpk_label.setText('Cp/Cpk: N/A')
             return
         lo, hi, _prod_lo, _prod_hi = self._limits.get(self._current_mkey, (None, None, None, None))
-        site_rows = []
+        finite_vals = []
+        passed = 0
+        failed = 0
+        warned = 0
         for s in self._sites:
             v = get_site_value(s, self._current_mkey, self._current_sub)
             if v is None or not math.isfinite(v):
                 continue
-            site_rows.append({
-                'name': s.get('name', '—'),
-                'x': s.get('x', '—'),
-                'y': s.get('y', '—'),
-                'value': v,
-            })
-        finite_vals = [row['value'] for row in site_rows]
+            finite_vals.append(v)
+            is_fail = (lo is not None and v < lo) or (hi is not None and v > hi)
+            if is_fail:
+                failed += 1
+                continue
+            passed += 1
+            near_lo = lo is not None and abs(v - lo) <= max(1e-18, abs(lo) * 0.02)
+            near_hi = hi is not None and abs(v - hi) <= max(1e-18, abs(hi) * 0.02)
+            if near_lo or near_hi:
+                warned += 1
         self.hist_panel.set_data(finite_vals, lo, hi)
-
-        mean_v = statistics.mean(finite_vals) if finite_vals else None
-        if finite_vals and mean_v is not None:
-            for row in site_rows:
-                v = row['value']
-                row['abs_delta'] = abs(v - mean_v)
-                if (lo is not None and v < lo) or (hi is not None and v > hi):
-                    row['status'] = 'Fail'
-                elif (lo is not None and abs(v - lo) <= max(1e-18, abs(lo) * 0.02)) or (
-                    hi is not None and abs(v - hi) <= max(1e-18, abs(hi) * 0.02)
-                ):
-                    row['status'] = 'Warn'
-                else:
-                    row['status'] = 'Pass'
-            site_rows.sort(key=lambda row: row['abs_delta'], reverse=True)
-            if hasattr(self, 'outlier_panel'):
-                self.outlier_panel.set_data(site_rows[:10], mean_v)
-        else:
-            if hasattr(self, 'outlier_panel'):
-                self.outlier_panel.set_data([], None)
+        if hasattr(self, 'yield_donut_panel'):
+            self.yield_donut_panel.set_data(passed, failed, warned)
 
         if finite_vals and lo is not None and hi is not None:
+            mean_v = statistics.mean(finite_vals)
             std_v = statistics.pstdev(finite_vals)
             if std_v > 0:
                 cp = (hi - lo) / (6.0 * std_v)
