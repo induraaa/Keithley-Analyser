@@ -3637,9 +3637,6 @@ class MainWindow(QMainWindow):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    # Use a consistent DPI baseline so UI layout remains stable
-    # across different display resolutions/scaling settings.
-    QApplication.setAttribute(Qt.AA_Use96Dpi, True)
     app = QApplication(sys.argv)
     app.setApplicationName('Wafer Map Viewer')
     app.setStyle('Fusion')
