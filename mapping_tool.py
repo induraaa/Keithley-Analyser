@@ -89,19 +89,19 @@ QMainWindow,QWidget{
 QGroupBox{
     background-color:""" + T['bg_panel'] + """;
     border:1px solid """ + T['border'] + """;
-    border-radius:10px;
+    border-radius:12px;
     margin-top:22px;
-    padding:10px 8px 8px 8px;
+    padding:12px 10px 10px 10px;
     font-weight:bold;
-    font-size:11px;
+    font-size:12px;
 }
 QGroupBox::title{
     subcontrol-origin:margin;
-    left:12px;
-    padding:2px 8px;
+    left:14px;
+    padding:3px 9px;
     background:""" + T['bg_panel'] + """;
     color:""" + T['accent'] + """;
-    font-size:11px;
+    font-size:12px;
     font-weight:bold;
     border-radius:4px;
 }
@@ -109,12 +109,12 @@ QLabel{background:transparent;color:""" + T['text_primary'] + """;font-size:13px
 QPushButton{
     background-color:""" + T['bg_panel'] + """;
     border:1px solid """ + T['border_hi'] + """;
-    border-radius:8px;
-    padding:6px 16px;
+    border-radius:10px;
+    padding:7px 16px;
     color:""" + T['text_primary'] + """;
     font-weight:600;
     font-size:13px;
-    min-height:28px;
+    min-height:30px;
 }
 QPushButton:hover{
     background-color:""" + T['accent_dim'] + """;
@@ -133,11 +133,11 @@ QPushButton#primary:hover{background-color:""" + T['accent_dark'] + """;}
 QComboBox{
     background-color:""" + T['bg_panel'] + """;
     border:1px solid """ + T['border'] + """;
-    border-radius:8px;
-    padding:5px 36px 5px 12px;
+    border-radius:10px;
+    padding:6px 36px 6px 12px;
     color:""" + T['text_primary'] + """;
     font-size:13px;
-    min-height:32px;
+    min-height:34px;
 }
 QComboBox:hover{border:1px solid """ + T['accent'] + """;}
 QComboBox:focus{border:1px solid """ + T['accent'] + """;}
@@ -196,11 +196,11 @@ QComboBoxPrivateContainer *{
 QLineEdit,QSpinBox{
     background-color:""" + T['bg_panel'] + """;
     border:1px solid """ + T['border'] + """;
-    border-radius:8px;
-    padding:5px 10px;
+    border-radius:10px;
+    padding:6px 10px;
     color:""" + T['text_primary'] + """;
     font-size:13px;
-    min-height:28px;
+    min-height:30px;
 }
 QLineEdit:focus,QSpinBox:focus{border:1px solid """ + T['accent'] + """;}
 QSpinBox::up-button,QSpinBox::down-button{
@@ -212,12 +212,12 @@ QSpinBox::up-button,QSpinBox::down-button{
 QTreeWidget,QTableWidget{
     background-color:""" + T['bg_panel'] + """;
     border:1px solid """ + T['border'] + """;
-    border-radius:8px;
+    border-radius:10px;
     alternate-background-color:""" + T['bg_row_alt'] + """;
     outline:none;
     font-size:13px;
 }
-QTreeWidget::item,QTableWidget::item{padding:4px 5px;border:none;}
+QTreeWidget::item,QTableWidget::item{padding:6px 7px;border:none;}
 QTreeWidget::item:hover,QTableWidget::item:hover{
     background-color:""" + T['accent_dim'] + """;
     border-radius:4px;
@@ -233,7 +233,7 @@ QHeaderView::section{
     border:none;
     border-right:1px solid """ + T['border'] + """;
     border-bottom:1px solid """ + T['border'] + """;
-    padding:6px 10px;
+    padding:7px 10px;
     font-size:12px;
     font-weight:bold;
 }
@@ -259,12 +259,12 @@ QScrollBar::handle:horizontal{
 QTabWidget::pane{
     border:1px solid """ + T['border'] + """;
     background:""" + T['bg_panel'] + """;
-    border-radius:0 8px 8px 8px;
+    border-radius:0 10px 10px 10px;
 }
 QTabBar::tab{
     background:""" + T['bg_header'] + """;
     color:""" + T['text_secondary'] + """;
-    padding:7px 18px;
+    padding:8px 18px;
     border:1px solid """ + T['border'] + """;
     border-bottom:none;
     border-radius:8px 8px 0 0;
@@ -281,23 +281,23 @@ QStatusBar{
     background:""" + T['bg_header'] + """;
     color:""" + T['text_secondary'] + """;
     border-top:1px solid """ + T['border'] + """;
-    font-size:12px;padding:3px 6px;
+    font-size:12px;padding:5px 8px;
 }
 QToolBar{
     background:""" + T['bg_panel'] + """;
     border-bottom:1px solid """ + T['border'] + """;
-    spacing:4px;padding:5px 10px;
+    spacing:6px;padding:6px 12px;
 }
 QToolBar::separator{background:""" + T['border'] + """;width:1px;margin:4px 8px;}
 QToolBar QToolButton{
     background-color:""" + T['accent'] + """;
     color:white;
     border:1px solid """ + T['accent_dark'] + """;
-    border-radius:10px;
-    padding:6px 14px;
+    border-radius:11px;
+    padding:7px 14px;
     font-weight:700;
     font-size:13px;
-    min-height:30px;
+    min-height:32px;
 }
 QToolBar QToolButton:hover{
     background-color:""" + T['accent_dark'] + """;
@@ -1607,16 +1607,16 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.lbl_file)
 
         cw = QWidget(); self.setCentralWidget(cw)
-        root = QVBoxLayout(cw); root.setSpacing(8); root.setContentsMargins(10, 10, 10, 10)
+        root = QVBoxLayout(cw); root.setSpacing(10); root.setContentsMargins(12, 12, 12, 12)
         self.main_tabs = QTabWidget()
         root.addWidget(self.main_tabs)
 
         wafer_page = QWidget()
-        mh = QHBoxLayout(wafer_page); mh.setSpacing(10); mh.setContentsMargins(0, 0, 0, 0)
+        mh = QHBoxLayout(wafer_page); mh.setSpacing(12); mh.setContentsMargins(2, 2, 2, 2)
 
         # ── left panel ────────────────────────────────────────────────────────
         left = QWidget(); left.setFixedWidth(320)
-        lv = QVBoxLayout(left); lv.setSpacing(12); lv.setContentsMargins(0, 0, 0, 0)
+        lv = QVBoxLayout(left); lv.setSpacing(14); lv.setContentsMargins(2, 2, 2, 2)
 
         ib = QGroupBox('File Information')
         iform = QFormLayout(ib); iform.setSpacing(8)
@@ -1743,7 +1743,7 @@ class MainWindow(QMainWindow):
         canvas_wrap.setStyleSheet(
             f'background:{T["bg_panel"]};border:1px solid {T["border"]};'
             f'border-radius:12px;')
-        cl = QVBoxLayout(canvas_wrap); cl.setContentsMargins(4, 4, 4, 4)
+        cl = QVBoxLayout(canvas_wrap); cl.setContentsMargins(6, 6, 6, 6)
         self.canvas.siteClicked.connect(self._on_die_clicked)
         cl.addWidget(self.canvas)
         mh.addWidget(canvas_wrap, stretch=3)
@@ -1756,7 +1756,7 @@ class MainWindow(QMainWindow):
         self.detail_panel = SiteDetailPanel()
         self.stats_panel = StatsPanel()
         self.analytics_panel = QWidget()
-        av = QVBoxLayout(self.analytics_panel); av.setContentsMargins(8, 8, 8, 8); av.setSpacing(8)
+        av = QVBoxLayout(self.analytics_panel); av.setContentsMargins(10, 10, 10, 10); av.setSpacing(10)
 
         top_row = QHBoxLayout(); top_row.setSpacing(6)
         self.continuous_heatmap_toggle = QCheckBox('Continuous heatmap')
@@ -1770,7 +1770,7 @@ class MainWindow(QMainWindow):
         av.addLayout(top_row)
 
         dist_box = QGroupBox('Distribution')
-        dv = QVBoxLayout(dist_box); dv.setContentsMargins(8, 8, 8, 8); dv.setSpacing(6)
+        dv = QVBoxLayout(dist_box); dv.setContentsMargins(10, 10, 10, 10); dv.setSpacing(8)
         dist_summary = QLabel('Histogram with normal-fit overlay for the selected measurement.')
         dist_summary.setWordWrap(True)
         dist_summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
@@ -1782,13 +1782,13 @@ class MainWindow(QMainWindow):
         av.addWidget(dist_box)
 
         yield_box = QGroupBox('Pass / Fail Summary')
-        ov = QVBoxLayout(yield_box); ov.setContentsMargins(8, 8, 8, 8); ov.setSpacing(6)
+        ov = QVBoxLayout(yield_box); ov.setContentsMargins(10, 10, 10, 10); ov.setSpacing(8)
         self.yield_donut_panel = YieldDonutPanel()
         ov.addWidget(self.yield_donut_panel)
         av.addWidget(yield_box)
 
         mini_heatmap_box = QGroupBox('Mini Heatmap')
-        mhv = QVBoxLayout(mini_heatmap_box); mhv.setContentsMargins(8, 8, 8, 8); mhv.setSpacing(6)
+        mhv = QVBoxLayout(mini_heatmap_box); mhv.setContentsMargins(10, 10, 10, 10); mhv.setSpacing(8)
         mini_summary = QLabel('Compact wafer overview using pass / near-limit / fail colors.')
         mini_summary.setWordWrap(True)
         mini_summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
@@ -1803,7 +1803,7 @@ class MainWindow(QMainWindow):
         self.main_tabs.addTab(wafer_page, 'Wafer View')
 
         self.raw_tab = QWidget()
-        raw_root = QHBoxLayout(self.raw_tab); raw_root.setSpacing(12); raw_root.setContentsMargins(8, 8, 8, 8)
+        raw_root = QHBoxLayout(self.raw_tab); raw_root.setSpacing(14); raw_root.setContentsMargins(10, 10, 10, 10)
 
         raw_left = QWidget(); raw_left.setFixedWidth(270)
         raw_left.setStyleSheet(f'background:{T["bg_panel"]};border:1px solid {T["border"]};border-radius:10px;')
@@ -1840,7 +1840,7 @@ class MainWindow(QMainWindow):
         raw_view_wrap.setStyleSheet(
             f'background:{T["bg_panel"]};border:1px solid {T["border"]};border-radius:12px;'
         )
-        rvw = QVBoxLayout(raw_view_wrap); rvw.setContentsMargins(8, 8, 8, 8); rvw.setSpacing(6)
+        rvw = QVBoxLayout(raw_view_wrap); rvw.setContentsMargins(10, 10, 10, 10); rvw.setSpacing(8)
         self.raw_data_title = QLabel('Raw table view')
         self.raw_data_title.setStyleSheet(f'font-weight:700;color:{T["accent_dark"]};')
         rvw.addWidget(self.raw_data_title)
@@ -1864,14 +1864,14 @@ class MainWindow(QMainWindow):
         batch_outer.addWidget(self.batch_scroll)
         batch_content = QWidget()
         self.batch_scroll.setWidget(batch_content)
-        btv = QVBoxLayout(batch_content); btv.setContentsMargins(8, 8, 8, 8); btv.setSpacing(8)
+        btv = QVBoxLayout(batch_content); btv.setContentsMargins(10, 10, 10, 10); btv.setSpacing(10)
         self.batch_sections = QTabWidget()
         btv.addWidget(self.batch_sections)
         batch_analytics_page = QWidget()
-        bav = QVBoxLayout(batch_analytics_page); bav.setContentsMargins(8, 8, 8, 8); bav.setSpacing(8)
+        bav = QVBoxLayout(batch_analytics_page); bav.setContentsMargins(10, 10, 10, 10); bav.setSpacing(10)
         self.batch_sections.addTab(batch_analytics_page, 'Analytics')
         batch_limits_page = QWidget()
-        blv = QVBoxLayout(batch_limits_page); blv.setContentsMargins(8, 8, 8, 8); blv.setSpacing(8)
+        blv = QVBoxLayout(batch_limits_page); blv.setContentsMargins(10, 10, 10, 10); blv.setSpacing(10)
         self.batch_sections.addTab(batch_limits_page, 'Limits')
 
         controls = QGroupBox('Batch Controls')
