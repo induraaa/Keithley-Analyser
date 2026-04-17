@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QFormLayout, QStatusBar, QComboBox,
     QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QToolBar, QSizePolicy, QPushButton, QSpinBox, QCheckBox, QProgressBar,
-    QScrollArea, QPlainTextEdit, QRadioButton, QButtonGroup,
+    QScrollArea, QRadioButton, QButtonGroup,
     QStyle, QStyleOptionComboBox, QStyledItemDelegate
 )
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSize, QRect
@@ -1837,13 +1837,15 @@ class MainWindow(QMainWindow):
             f'background:{T["bg_panel"]};border:1px solid {T["border"]};border-radius:12px;'
         )
         rvw = QVBoxLayout(raw_view_wrap); rvw.setContentsMargins(8, 8, 8, 8); rvw.setSpacing(6)
-        self.raw_data_title = QLabel('Raw file contents')
+        self.raw_data_title = QLabel('Raw table view')
         self.raw_data_title.setStyleSheet(f'font-weight:700;color:{T["accent_dark"]};')
         rvw.addWidget(self.raw_data_title)
-        self.raw_data_view = QPlainTextEdit()
-        self.raw_data_view.setReadOnly(True)
-        self.raw_data_view.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.raw_data_view.setPlaceholderText('Raw KDF file contents will appear here.')
+        self.raw_data_view = QTableWidget(0, 0)
+        self.raw_data_view.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.raw_data_view.setAlternatingRowColors(True)
+        self.raw_data_view.setSelectionBehavior(QTableWidget.SelectRows)
+        self.raw_data_view.verticalHeader().setVisible(False)
+        self.raw_data_view.setSortingEnabled(False)
         rvw.addWidget(self.raw_data_view, stretch=1)
         raw_root.addWidget(raw_view_wrap, stretch=1)
         self.main_tabs.addTab(self.raw_tab, 'Raw Data')
@@ -2221,24 +2223,62 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'raw_data_view'):
             return
         if not path:
-            self.raw_data_title.setText('Raw file contents')
-            self.raw_data_summary.setText('Load a wafer file or batch folder to inspect raw KDF contents.')
-            self.raw_data_view.setPlainText('')
+            self.raw_data_title.setText('Raw table view')
+            self.raw_data_summary.setText('Load a wafer file to view one row per site/subsite.')
+            self.raw_data_view.setRowCount(0)
+            self.raw_data_view.setColumnCount(0)
             return
         try:
-            with open(path, 'r', encoding='utf-8', errors='replace') as fh:
-                text = fh.read()
-        except OSError as e:
-            self.raw_data_title.setText('Raw file contents')
-            self.raw_data_summary.setText(f'Could not read raw file: {e}')
-            self.raw_data_view.setPlainText('')
+            header, sites, mkeys, _tests = parse_kdf(path)
+        except Exception as e:
+            self.raw_data_title.setText('Raw table view')
+            self.raw_data_summary.setText(f'Could not parse raw file: {e}')
+            self.raw_data_view.setRowCount(0)
+            self.raw_data_view.setColumnCount(0)
             return
-        self.raw_data_title.setText(f'Raw file contents  ·  {os.path.basename(path)}')
+        self._populate_raw_data_table(path, header, sites, mkeys)
+
+    def _populate_raw_data_table(self, path: str, header: dict, sites: list, mkeys: list):
+        columns = ['Site', 'X', 'Y', 'Subsite'] + list(mkeys)
+        rows: list[dict] = []
+        for site in sites:
+            for subsite in sorted(site.get('subsites', {}).keys()):
+                row = {
+                    'Site': site.get('name', ''),
+                    'X': str(site.get('x', '')),
+                    'Y': str(site.get('y', '')),
+                    'Subsite': str(subsite),
+                }
+                sub_vals = site.get('subsites', {}).get(subsite, {})
+                for mkey in mkeys:
+                    val = sub_vals.get(mkey)
+                    row[mkey] = '' if val is None else f'{val:.12g}'
+                rows.append(row)
+
+        self.raw_data_view.setSortingEnabled(False)
+        self.raw_data_view.clear()
+        self.raw_data_view.setRowCount(len(rows))
+        self.raw_data_view.setColumnCount(len(columns))
+        self.raw_data_view.setHorizontalHeaderLabels(columns)
+        self.raw_data_view.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.raw_data_view.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.raw_data_view.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.raw_data_view.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        for col in range(4, len(columns)):
+            self.raw_data_view.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+
+        for r, row in enumerate(rows):
+            for c, col_name in enumerate(columns):
+                item = QTableWidgetItem(row.get(col_name, ''))
+                if c >= 1:
+                    item.setTextAlignment(Qt.AlignCenter)
+                self.raw_data_view.setItem(r, c, item)
+
+        lot = header.get('LOT', '—')
+        self.raw_data_title.setText(f'Raw table view  ·  {os.path.basename(path)}')
         self.raw_data_summary.setText(
-            f'Reading raw KDF text from {os.path.basename(path)}'
-            + (f'  ·  batch files available: {len(self._batch_records)}' if self._batch_records else '')
+            f'One row per site/subsite  ·  lot {lot}  ·  rows: {len(rows)}  ·  metrics: {len(mkeys)}'
         )
-        self.raw_data_view.setPlainText(text)
 
     def _on_raw_selection_changed(self, checked: bool):
         if not checked:
