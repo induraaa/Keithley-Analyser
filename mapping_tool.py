@@ -1169,10 +1169,7 @@ class HistogramPanel(QWidget):
             return chart.left() + ((v - vmin) / (vmax - vmin)) * chart.width()
 
         markers = [
-            ('Spec low', self._lo, FAIL_COLOR, Qt.DashLine),
-            ('Spec high', self._hi, '#8B0000', Qt.DashLine),
-            ('Mean - 3σ', mean_v - 3 * std_v, WARN_COLOR, Qt.DotLine),
-            ('Mean + 3σ', mean_v + 3 * std_v, '#C9A400', Qt.DotLine),
+            ('Mean', mean_v, T['accent_dark'], Qt.SolidLine),
         ]
         for _label, mark, col, style in markers:
             if mark is None:
@@ -1804,12 +1801,17 @@ class MainWindow(QMainWindow):
         self.main_tabs.addTab(wafer_page, 'Wafer View')
 
         self.raw_tab = QWidget()
-        raw_root = QHBoxLayout(self.raw_tab); raw_root.setSpacing(10); raw_root.setContentsMargins(0, 0, 0, 0)
+        raw_root = QHBoxLayout(self.raw_tab); raw_root.setSpacing(12); raw_root.setContentsMargins(8, 8, 8, 8)
 
-        raw_left = QWidget(); raw_left.setFixedWidth(260)
-        rlv = QVBoxLayout(raw_left); rlv.setSpacing(8); rlv.setContentsMargins(0, 0, 0, 0)
-        raw_box = QGroupBox('Raw File Selection')
-        rsv = QVBoxLayout(raw_box); rsv.setContentsMargins(8, 8, 8, 8); rsv.setSpacing(6)
+        raw_left = QWidget(); raw_left.setFixedWidth(270)
+        raw_left.setStyleSheet(f'background:{T["bg_panel"]};border:1px solid {T["border"]};border-radius:10px;')
+        rlv = QVBoxLayout(raw_left); rlv.setSpacing(8); rlv.setContentsMargins(10, 10, 10, 10)
+        raw_title = QLabel('Raw File Selection')
+        raw_title.setStyleSheet(f'font-weight:700;color:{T["accent_dark"]};')
+        rlv.addWidget(raw_title)
+        raw_box = QWidget()
+        raw_box.setStyleSheet('background:transparent;border:none;')
+        rsv = QVBoxLayout(raw_box); rsv.setContentsMargins(0, 0, 0, 0); rsv.setSpacing(6)
         self.raw_data_summary = QLabel('Load a wafer file or batch folder to inspect raw KDF contents.')
         self.raw_data_summary.setWordWrap(True)
         self.raw_data_summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
