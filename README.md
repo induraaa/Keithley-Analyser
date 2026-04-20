@@ -49,16 +49,20 @@ python wafer_mapper_light.py
 Then open a .kdf file from the UI.
 
 🧠 How It Works
+
 Parses KDF files into:
 Header metadata
 Site coordinates (X, Y)
 Measurement values per design
+
 Renders:
 Wafer layout with spatial accuracy
 Colour-coded dies based on limits or value gradients
+
 Provides:
 Statistical summaries
 Visual analytics panels
+
 🎨 UI Highlights
 Clean, modern theme (custom Qt styling)
 Smooth zoom and interaction
@@ -66,17 +70,20 @@ Responsive layout with multiple panels:
 Wafer view
 Site detail
 Statistics
+
 Charts
 📦 Project Structure
 .
 ├── wafer_mapper_light.py   # Main application
 ├── assets/                 # Icons (optional)
 ├── README.md
+
 🚀 Future Improvements
 Batch wafer comparison
 CSV / database import support
 Dark mode toggle
 Performance optimisation for large datasets
+
 🤝 Contributing
 
 Pull requests are welcome. For major changes, open an issue first to discuss ideas.
@@ -88,12 +95,8 @@ MIT License — feel free to use and modify.
 🙌 Acknowledgements
 Built with PySide6 (Qt for Python)
 Designed for semiconductor test data workflows
+
 ⭐ Support
 
 If you find this useful, give it a star ⭐ — it helps a lot!
 
-If you want, I can upgrade this further with:
-
-real badges (build, license, Python version)
-embedded GIF demo
-a more “portfolio-level” README (great for internships like Arup)
