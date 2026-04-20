@@ -71,12 +71,13 @@ Wafer view
 Site detail
 Statistics
 
-Charts
+##Charts
 📦 Project Structure
 .
 ├── wafer_mapper_light.py   # Main application
 ├── assets/                 # Icons (optional)
 ├── README.md
+
 
 🚀 Future Improvements
 Batch wafer comparison
