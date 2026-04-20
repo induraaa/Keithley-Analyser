@@ -8,22 +8,28 @@ A powerful desktop application for exploring and analysing semiconductor wafer t
 🟢 Interactive Wafer Map
 Visualise die-level data across the wafer
 Zoom, hover, and click to inspect values
+
 📊 Advanced Data Analysis
 Built-in statistics (mean, std dev, yield, etc.)
 Histogram with normal distribution overlay
 Scatter plots and yield trends
+
 🎯 Pass/Fail & Limits
 Spec limits and production limits
 Colour-coded dies (pass / fail / warning)
 Continuous heatmap mode
+
 🔍 Detailed Inspection
 Click any die to view all measurements
 Multi-design (subsite) support
+
 📁 Flexible Input
 Supports KDF files from Keithley ACS systems
+
 📤 Export Options
 Export wafer maps as images
 Export to Excel for further analysis
+
 🖥️ Preview
 [ Add screenshots here — wafer map, histogram, UI panels ]
 ⚙️ Installation
@@ -32,6 +38,7 @@ git clone https://github.com/yourusername/wafer-map-viewer.git
 cd wafer-map-viewer
 2. Install dependencies
 pip install PySide6
+
 ▶️ Usage
 python wafer_mapper_light.py your_file.kdf
 
