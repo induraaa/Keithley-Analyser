@@ -96,7 +96,7 @@ MIT License — feel free to use and modify.
 Built with PySide6 (Qt for Python)
 Designed for semiconductor test data workflows
 
-#⭐ Support
+## ⭐ Support
 
 If you find this useful, give it a star ⭐ — it helps a lot!
 
