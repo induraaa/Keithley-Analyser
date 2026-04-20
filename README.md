@@ -3,7 +3,8 @@ Interactive KDF Visualisation Tool
 
 A powerful desktop application for exploring and analysing semiconductor wafer test data with intuitive visualisations and rich statistics.
 
-✨ Features
+## ✨ Features
+
 🟢 Interactive Wafer Map
 Visualise die-level data across the wafer
 Zoom, hover, and click to inspect values
