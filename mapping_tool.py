@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QFormLayout, QStatusBar, QComboBox,
     QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QToolBar, QSizePolicy, QPushButton, QSpinBox, QCheckBox, QProgressBar,
-    QScrollArea, QRadioButton, QButtonGroup,
+    QScrollArea, QRadioButton, QButtonGroup, QSplitter,
     QStyle, QStyleOptionComboBox, QStyledItemDelegate
 )
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSize, QRect
@@ -1613,6 +1613,8 @@ class MainWindow(QMainWindow):
 
         wafer_page = QWidget()
         mh = QHBoxLayout(wafer_page); mh.setSpacing(12); mh.setContentsMargins(2, 2, 2, 2)
+        wafer_splitter = QSplitter(Qt.Horizontal)
+        wafer_splitter.setChildrenCollapsible(False)
 
         # ── left panel ────────────────────────────────────────────────────────
         left = QWidget()
@@ -1739,7 +1741,7 @@ class MainWindow(QMainWindow):
         lv.addWidget(lb)
 
         lv.addStretch()
-        mh.addWidget(left)
+        wafer_splitter.addWidget(left)
 
         # ── centre canvas ─────────────────────────────────────────────────────
         canvas_wrap = QWidget()
@@ -1749,7 +1751,7 @@ class MainWindow(QMainWindow):
         cl = QVBoxLayout(canvas_wrap); cl.setContentsMargins(6, 6, 6, 6)
         self.canvas.siteClicked.connect(self._on_die_clicked)
         cl.addWidget(self.canvas)
-        mh.addWidget(canvas_wrap, stretch=3)
+        wafer_splitter.addWidget(canvas_wrap)
 
         # ── right panel ───────────────────────────────────────────────────────
         right = QWidget()
@@ -1805,13 +1807,20 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.analytics_panel, 'Analysis')
         tabs.addTab(self.stats_panel, 'Statistics')
         tabs.addTab(self.detail_panel, 'Die Detail')
-        mh.addWidget(right)
+        wafer_splitter.addWidget(right)
+        wafer_splitter.setStretchFactor(0, 0)
+        wafer_splitter.setStretchFactor(1, 1)
+        wafer_splitter.setStretchFactor(2, 0)
+        wafer_splitter.setSizes([320, 900, 340])
+        mh.addWidget(wafer_splitter)
         self.main_tabs.addTab(wafer_page, 'Wafer View')
 
         self.raw_tab = QWidget()
         raw_root = QHBoxLayout(self.raw_tab); raw_root.setSpacing(14); raw_root.setContentsMargins(10, 10, 10, 10)
 
-        raw_left = QWidget(); raw_left.setFixedWidth(270)
+        raw_left = QWidget()
+        raw_left.setMinimumWidth(220)
+        raw_left.setMaximumWidth(360)
         raw_left.setStyleSheet(f'background:{T["bg_panel"]};border:1px solid {T["border"]};border-radius:10px;')
         rlv = QVBoxLayout(raw_left); rlv.setSpacing(8); rlv.setContentsMargins(10, 10, 10, 10)
         raw_title = QLabel('Raw File Selection')
