@@ -1,6 +1,6 @@
 # Keithley Analyser
 Interactive KDF Visualisation Tool
-pyinstaller --noconfirm --clean --windowed --name "WaferMapViewer" --icon "app_icon.ico" --collect-all PySide6 --hidden-import openpyxl --hidden-import lxml mapping_tool.py
+py -m PyInstaller --noconfirm --clean --onefile --windowed --name "WaferMapViewer" --icon "app_icon.ico" --add-data "app_icon.ico;." --collect-data PySide6 --hidden-import openpyxl --hidden-import lxml mapping_tool.py
 ## ✨ Features
 
 🟢 Interactive Wafer Map
