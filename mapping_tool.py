@@ -1156,7 +1156,8 @@ class HistogramPanel(QWidget):
         self._lo = None
         self._hi = None
         self._bins = 20
-        self.setMinimumHeight(180)
+        s = _dpi_scale()
+        self.setMinimumHeight(max(130, round(180 / s)))
 
     def set_data(self, values: list[float], lo, hi):
         self._values = [v for v in values if v is not None and math.isfinite(v)]
@@ -1168,10 +1169,18 @@ class HistogramPanel(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor(T['bg_panel']))
+
+        s = _dpi_scale()
+        # Scale all paint-space values by the inverse of DPI so they look right
+        # at both 100 % and 125 % without the widget itself being oversized.
+        def sc(v): return round(v / s)
+
         if not self._values:
             p.setPen(QColor(T['text_dim']))
+            p.setFont(QFont('Segoe UI', sc(11)))
             p.drawText(self.rect(), Qt.AlignCenter, 'No data for histogram')
             return
+
         vals = self._values
         vmin, vmax = min(vals), max(vals)
         if abs(vmax - vmin) < 1e-18:
@@ -1185,19 +1194,18 @@ class HistogramPanel(QWidget):
             bins[idx] += 1
         max_bin = max(bins) if bins else 1
 
-        # Keep margins scale-friendly so bottom labels do not clip on 125% DPI.
-        left_margin = 50
-        right_margin = 14
-        top_margin = 8
-        bottom_margin = 34
+        left_margin  = sc(48)
+        right_margin = sc(12)
+        top_margin   = sc(8)
+        bottom_margin = sc(30)
         chart = QRectF(
-            left_margin,
-            top_margin,
-            max(80, self.width() - (left_margin + right_margin)),
-            max(108, self.height() - (top_margin + bottom_margin)),
+            left_margin, top_margin,
+            max(60, self.width() - (left_margin + right_margin)),
+            max(80, self.height() - (top_margin + bottom_margin)),
         )
         p.setPen(QPen(QColor(T['border']), 1))
         p.drawRect(chart)
+
         bw = chart.width() / self._bins
         for i, cnt in enumerate(bins):
             h = (cnt / max_bin) * (chart.height() - 4) if max_bin else 0
@@ -1207,63 +1215,55 @@ class HistogramPanel(QWidget):
             p.drawRect(r)
 
         mean_v = statistics.mean(vals)
-        std_v = statistics.pstdev(vals)
+        std_v  = statistics.pstdev(vals)
 
         def x_for(v):
             return chart.left() + ((v - vmin) / (vmax - vmin)) * chart.width()
 
-        markers = [
-            ('Mean', mean_v, T['accent_dark'], Qt.SolidLine),
-        ]
-        for _label, mark, col, style in markers:
-            if mark is None:
-                continue
-            x = x_for(mark)
-            p.setPen(QPen(QColor(col), 1.5, style))
-            p.drawLine(QPointF(x, chart.top()), QPointF(x, chart.bottom()))
+        x = x_for(mean_v)
+        p.setPen(QPen(QColor(T['accent_dark']), 1.5, Qt.SolidLine))
+        p.drawLine(QPointF(x, chart.top()), QPointF(x, chart.bottom()))
 
-        # Bell curve overlay (normal approximation) to complement Cp/Cpk context.
-        if std_v > 0:
-            span = vmax - vmin
-            if span > 0 and max_bin > 0:
-                bin_width = span / self._bins
-                denom = std_v * math.sqrt(2.0 * math.pi)
-                peak_pdf = 1.0 / denom
-                expected_at_mean = peak_pdf * bin_width * len(vals)
-                scale = (max_bin / expected_at_mean) if expected_at_mean > 0 else 1.0
+        # Bell curve overlay.
+        if std_v > 0 and span > 0 and max_bin > 0:
+            bin_width = span / self._bins
+            denom = std_v * math.sqrt(2.0 * math.pi)
+            expected_at_mean = (1.0 / denom) * bin_width * len(vals)
+            scale_factor = (max_bin / expected_at_mean) if expected_at_mean > 0 else 1.0
+            steps = 140
+            curve = QPolygonF()
+            for j in range(steps + 1):
+                x_val = vmin + (j / steps) * span
+                pdf = math.exp(-((x_val - mean_v) ** 2) / (2.0 * std_v * std_v)) / denom
+                expected = pdf * bin_width * len(vals) * scale_factor
+                frac_h = max(0.0, min(1.0, expected / max_bin))
+                y_pt = (chart.bottom() - 1) - frac_h * (chart.height() - 4)
+                curve.append(QPointF(x_for(x_val), y_pt))
+            p.setPen(QPen(QColor(T['accent_dark']), 1.5))
+            p.drawPolyline(curve)
 
-                steps = 140
-                curve = QPolygonF()
-                for j in range(steps + 1):
-                    x_val = vmin + (j / steps) * span
-                    pdf = math.exp(-((x_val - mean_v) ** 2) / (2.0 * std_v * std_v)) / denom
-                    expected = pdf * bin_width * len(vals) * scale
-                    frac_h = max(0.0, min(1.0, expected / max_bin))
-                    y = (chart.bottom() - 1) - frac_h * (chart.height() - 4)
-                    curve.append(QPointF(x_for(x_val), y))
-
-                p.setPen(QPen(QColor(T['accent_dark']), 2))
-                p.drawPolyline(curve)
-
-        # Axis labels and tick annotations.
+        # Axis tick labels.
+        tick_fs = max(7, sc(9))
         p.setPen(QColor(T['text_secondary']))
-        font_ticks = QFont('Consolas', 9)
-        p.setFont(font_ticks)
-        p.drawText(QRectF(chart.left(), chart.bottom() + 4, 86, 14), si_fmt(vmin))
-        p.drawText(QRectF(chart.right() - 86, chart.bottom() + 4, 86, 14), Qt.AlignRight, si_fmt(vmax))
+        p.setFont(QFont('Consolas', tick_fs))
+        label_h = tick_fs + 4
+        p.drawText(QRectF(chart.left(), chart.bottom() + 3, sc(80), label_h), si_fmt(vmin))
+        p.drawText(QRectF(chart.right() - sc(80), chart.bottom() + 3, sc(80), label_h),
+                   Qt.AlignRight, si_fmt(vmax))
 
-        # Y axis name: count, rotated on the left.
+        # Rotated Y-axis label.
         p.save()
-        p.translate(chart.left() - 26, chart.top() + chart.height() / 2)
+        p.translate(chart.left() - sc(24), chart.top() + chart.height() / 2)
         p.rotate(-90)
-        p.drawText(QRectF(-chart.height() / 2, -8, chart.height(), 16),
+        p.setFont(QFont('Segoe UI', tick_fs))
+        p.drawText(QRectF(-chart.height() / 2, -label_h / 2, chart.height(), label_h),
                    Qt.AlignCenter, 'Count')
         p.restore()
 
 class YieldDonutPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        lo = QVBoxLayout(self); lo.setContentsMargins(0, 0, 0, 0); lo.setSpacing(6)
+        lo = QVBoxLayout(self); lo.setContentsMargins(0, 0, 0, 0); lo.setSpacing(4)
         self.summary = QLabel('Quick visual summary of pass and fail counts.')
         self.summary.setWordWrap(True)
         self.summary.setStyleSheet(f'color:{T["text_secondary"]};font-size:12px;')
@@ -1272,7 +1272,8 @@ class YieldDonutPanel(QWidget):
         self._pass = 0
         self._fail = 0
         self._warn = 0
-        self.setMinimumHeight(210)
+        s = _dpi_scale()
+        self.setMinimumHeight(max(140, round(210 / s)))
 
     def set_data(self, passed: int, failed: int, warned: int = 0):
         self._pass = max(0, int(passed))
@@ -1285,19 +1286,27 @@ class YieldDonutPanel(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor(T['bg_panel']))
 
+        s = _dpi_scale()
+        def sc(v): return v / s   # float scale helper for paint coords
+
         total = self._pass + self._fail
         if total <= 0:
             p.setPen(QColor(T['text_dim']))
+            p.setFont(QFont('Segoe UI', max(9, round(sc(11)))))
             p.drawText(self.rect(), Qt.AlignCenter, 'No pass/fail data')
             return
 
-        body = self.rect().adjusted(8, 32, -8, -8)
-        donut_size = min(body.width() * 0.62, body.height() - 8)
-        donut_size = max(96.0, donut_size)
-        cx = body.left() + donut_size / 2.0 + 6
+        # Reserve a compact top strip for title context, rest is chart area.
+        body = self.rect().adjusted(int(sc(6)), int(sc(24)), int(-sc(6)), int(-sc(6)))
+
+        # Donut: size based on body, but never too large.
+        donut_size = min(body.width() * 0.58, body.height() - sc(4))
+        donut_size = max(sc(80), donut_size)
+        cx = body.left() + donut_size / 2.0 + sc(4)
         cy = body.center().y()
         outer = QRectF(cx - donut_size / 2.0, cy - donut_size / 2.0, donut_size, donut_size)
-        inner_margin = donut_size * 0.24
+        inner_margin = donut_size * 0.26
+
         start = 90 * 16
         pass_span = int(-360 * 16 * (self._pass / total))
         fail_span = -360 * 16 - pass_span
@@ -1310,27 +1319,38 @@ class YieldDonutPanel(QWidget):
         p.setBrush(QColor(T['bg_panel']))
         p.drawEllipse(outer.adjusted(inner_margin, inner_margin, -inner_margin, -inner_margin))
 
+        centre_fs = max(10, round(sc(15)))
         p.setPen(QColor(T['text_primary']))
-        p.setFont(QFont('Segoe UI', 16, QFont.Bold))
+        p.setFont(QFont('Segoe UI', centre_fs, QFont.Bold))
         p.drawText(outer, Qt.AlignCenter, f'{(self._pass / total) * 100.0:.0f}%')
 
-        legend_x = outer.right() + 14
-        legend_y = outer.top() + 18
-        p.setFont(QFont('Segoe UI', 10))
-        for idx, (label, value, color) in enumerate((
-            ('Pass', self._pass, PASS_COLOR),
-            ('Fail', self._fail, FAIL_COLOR),
+        # Legend — positioned to the right of the donut, vertically centred.
+        legend_fs  = max(8, round(sc(10)))
+        dot_size   = max(7.0, sc(10))
+        row_gap    = max(18.0, sc(26))
+        legend_x   = outer.right() + sc(12)
+        entries = [
+            ('Pass',       self._pass, PASS_COLOR),
+            ('Fail',       self._fail, FAIL_COLOR),
             ('Near limit', self._warn, WARN_COLOR),
-        )):
-            if idx == 2 and value <= 0:
-                continue
-            y = legend_y + idx * 28
+        ]
+        visible = [(lbl, val, col) for lbl, val, col in entries if not (lbl == 'Near limit' and val <= 0)]
+        total_legend_h = len(visible) * row_gap
+        legend_y = cy - total_legend_h / 2.0 + dot_size / 2.0
+
+        p.setFont(QFont('Segoe UI', legend_fs))
+        for lbl, val, color in visible:
             p.setBrush(QColor(color))
             p.setPen(Qt.NoPen)
-            p.drawEllipse(QRectF(legend_x, y, 10, 10))
+            p.drawEllipse(QRectF(legend_x, legend_y, dot_size, dot_size))
             p.setPen(QColor(T['text_primary']))
-            p.drawText(QRectF(legend_x + 16, y - 5, max(80, body.right() - legend_x - 12), 20),
-                       Qt.AlignVCenter, f'{label}: {value}')
+            text_w = max(sc(70), body.right() - legend_x - dot_size - sc(4))
+            p.drawText(
+                QRectF(legend_x + dot_size + sc(5), legend_y - sc(4), text_w, dot_size + sc(8)),
+                Qt.AlignVCenter,
+                f'{lbl}: {val}',
+            )
+            legend_y += row_gap
 
 
 class MiniHeatmapPanel(QWidget):
@@ -1339,7 +1359,8 @@ class MiniHeatmapPanel(QWidget):
         self._points = []
         self._vmin = None
         self._vmax = None
-        self.setMinimumHeight(150)
+        s = _dpi_scale()
+        self.setMinimumHeight(max(110, round(150 / s)))
 
     def set_data(self, points: list[dict], vmin=None, vmax=None):
         self._points = points
@@ -1353,6 +1374,8 @@ class MiniHeatmapPanel(QWidget):
         p.fillRect(self.rect(), QColor(T['bg_panel']))
         if not self._points:
             p.setPen(QColor(T['text_dim']))
+            s = _dpi_scale()
+            p.setFont(QFont('Segoe UI', max(9, round(11 / s))))
             p.drawText(self.rect(), Qt.AlignCenter, 'No mini heatmap data')
             return
 
@@ -1361,10 +1384,14 @@ class MiniHeatmapPanel(QWidget):
         x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
         n_cols = x1 - x0 + 1
         n_rows = y1 - y0 + 1
-        body = self.rect().adjusted(8, 8, -8, -8)
+        s = _dpi_scale()
+        pad = max(4, round(8 / s))
+        body = self.rect().adjusted(pad, pad, -pad, -pad)
         cell = min(body.width() / max(1, n_cols), body.height() / max(1, n_rows))
         ox = body.left() + (body.width() - cell * n_cols) / 2.0
         oy = body.top() + (body.height() - cell * n_rows) / 2.0
+        gap = max(0.5, round(1 / s))
+        radius = max(1.5, round(2.5 / s))
 
         for d in self._points:
             value = d.get('value')
@@ -1382,10 +1409,10 @@ class MiniHeatmapPanel(QWidget):
                 bg = QColor(T['nodata_bg'])
             x = ox + (d['x'] - x0) * cell
             y = oy + (y1 - d['y']) * cell
-            rect = QRectF(x + 1, y + 1, max(2.0, cell - 2), max(2.0, cell - 2))
+            rect = QRectF(x + gap, y + gap, max(2.0, cell - gap * 2), max(2.0, cell - gap * 2))
             p.setBrush(bg)
             p.setPen(QPen(QColor(T['border']), 0.8))
-            p.drawRoundedRect(rect, 2.5, 2.5)
+            p.drawRoundedRect(rect, radius, radius)
 
 
 class ScatterPanel(QWidget):
