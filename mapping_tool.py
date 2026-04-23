@@ -1588,7 +1588,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle('Wafer Map Viewer')
         # Rebuild the stylesheet now that QApplication+screen exist and DPI is known.
         self.setStyleSheet(build_stylesheet())
-        self.setWindowIcon(make_app_icon())
+        # Set icon on the window directly — required for the title bar in PyInstaller EXEs.
+        # QApplication.setWindowIcon only covers the taskbar; the QMainWindow
+        # needs its own setWindowIcon call to populate the title-bar corner icon.
+        icon = make_app_icon()
+        self.setWindowIcon(icon)
         # Use available geometry so the window respects the taskbar on any display.
         screen = QApplication.primaryScreen()
         avail = screen.availableGeometry()  # excludes taskbar/dock
