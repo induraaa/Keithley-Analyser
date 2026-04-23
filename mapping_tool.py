@@ -1867,6 +1867,7 @@ class MainWindow(QMainWindow):
         analytics_scroll.setFrameShape(QScrollArea.NoFrame)
         analytics_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.analytics_panel = QWidget()
+        self.analytics_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         analytics_scroll.setWidget(self.analytics_panel)
 
         _ap = max(5, round(8 / _s))
@@ -1903,9 +1904,9 @@ class MainWindow(QMainWindow):
         mini_heatmap_box = QGroupBox('Mini Heatmap')
         mhv = QVBoxLayout(mini_heatmap_box); mhv.setContentsMargins(_gb_m, _gb_m, _gb_m, _gb_m); mhv.setSpacing(4)
         self.mini_heatmap_panel = MiniHeatmapPanel()
-        mhv.addWidget(self.mini_heatmap_panel)
-        av.addWidget(mini_heatmap_box)
-        av.addStretch()
+        self.mini_heatmap_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        mhv.addWidget(self.mini_heatmap_panel, stretch=1)
+        av.addWidget(mini_heatmap_box, stretch=1)
 
         tabs.addTab(analytics_scroll, 'Analysis')
         tabs.addTab(self.stats_panel, 'Statistics')
