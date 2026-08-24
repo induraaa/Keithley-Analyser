@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "C:\Users\I_Rathnamalala201\Downloads\Keithley_Mapper\mapping_tool.py", line 3821, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\I_Rathnamalala201\Downloads\Keithley_Mapper\mapping_tool.py", line 3815, in main
+    win = MainWindow()
+  File "C:\Users\I_Rathnamalala201\Downloads\Keithley_Mapper\mapping_tool.py", line 1630, in __init__
+    self._build_ui()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\I_Rathnamalala201\Downloads\Keithley_Mapper\mapping_tool.py", line 1662, in _build_ui
+    exp_act.triggered.connect(self.export_map)
+                              ^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute 'export_map'
