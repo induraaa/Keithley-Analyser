@@ -3444,7 +3444,37 @@ class MainWindow(QMainWindow):
                 return WARN
 
         return PASS
+def _add_data_sheet(self, wb, mkey, subs):
+    """Add a flat, copy/paste-friendly data sheet: one row per site (and per design)."""
+    from openpyxl.styles import Font, Alignment
 
+    ws = wb.create_sheet(title='Data')
+    headers = ['Wafer File', 'Site', 'X', 'Y', 'Design', mkey]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal='center')
+
+    wafer_name = os.path.basename(self._filepath) if self._filepath else ''
+
+    for s in self._sites:
+        for sub in subs:
+            v = get_site_value(s, mkey, sub)
+            ws.append([
+                wafer_name,
+                s['name'],
+                s['x'],
+                s['y'],
+                (sub if sub is not None else 'All'),
+                v if v is not None else None,   # blank cell instead of "N/A" so it's numeric/pasteable
+            ])
+
+    widths = {'A': 22, 'B': 14, 'C': 8, 'D': 8, 'E': 10, 'F': 16}
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
+
+    ws.freeze_panes = 'A2'
+    
     def export_map_excel(self):
         if not self._sites:
             QMessageBox.information(self, 'Nothing to export', 'Load a KDF file first.')
@@ -3561,7 +3591,7 @@ class MainWindow(QMainWindow):
                 ws.column_dimensions[get_column_letter(c)].width = 11
             for r in range(start_row, start_row + (y1 - y0 + 1)):
                 ws.row_dimensions[r].height = 22
-
+        self._add_data_sheet(wb, mkey, subs) 
         try:
             wb.save(out_path)
         except Exception as e:
